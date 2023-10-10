@@ -1,0 +1,427 @@
+---
+title: "Visualization of LOLA results - CpG level"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+library(scales)
+library(ggplot2)
+library(reshape2)
+```
+
+
+# Data
+
+LOLA was performed for DM, hyper-, and hypomethylated Cgs between the stomach regions using all Cgs of the normalized data set as the universe.
+
+Here I visualize the all results, including the collections * Cistrome Epigenome
+* Encode Segmentation
+* Encode TFBS
+* UCSC Features
+
+```{r}
+load("../../../../Data/Processed/ClonalCultures/DNAm/LOLA_Core_results_IM_vs_nonIM.Rdata")
+
+#unique(all_results_lola$`AU vs CU hyper`$tissue)
+
+#sel_celllines = c("H1-hESC", "HUVEC", "H1hesc", "Huvec", "Embryonic Stem Cell", "Endoderm")
+#sel_tissues = c()
+```
+
+
+# LOLA Visualization
+
+## Overview of significantly enriched genomic features
+
+```{r}
+all_results = all_results_lola
+
+all_results <- lapply(all_results, function(x) {
+  x2 <- x[,c("collection", "logOddsRatio", "description", "cellType", "tissue", "antibody", "treatment", "p.adj")] 
+    return(x2)
+  }
+)
+
+#rename the logOddsRatio which was labeled wrong (in our modified copy of runLOLA; fixed meanwhile in R package v1.28)
+
+all_results <- lapply(all_results, function(x) {
+  colnames(x) <- c("collection", "OddsRatio", "description", "cellType", "tissue", "antibody", "treatment", "p.adj")
+    return(x)
+  })
+
+
+all_results <- lapply(all_results, function(x)  { cbind(x, logOddsRatio = log2(x[,"OddsRatio"]))  })
+
+
+subsetLOLA_res <- 
+
+all_results <- lapply(all_results, function(x) {
+  colnames(x) <- c("collection", "OddsRatio", "description", "cellType", "tissue", "antibody", "treatment", "p.adj", "logOddsRatio")
+    return(x)
+  })
+
+
+
+all_results<- lapply(all_results, function(x) {
+ x2 <-  subset(x, (!complete.cases(x[,"treatment"])) | treatment == "None" | treatment == "No treatment" | treatment == "regular medium" | treatment == "serum_starved_media" | treatment == "serum_stimulated_media" | treatment == "full media" | treatment == "mock" | treatment == "No treatment(Antibody RAR _A704)" | treatment == "No treatment(Antibody RXR _sc774)")
+return(x2)
+  })
+
+
+for(dd in names(all_results)){
+  x = table(all_results[[dd]]$collection, all_results[[dd]]$p.adj < 0.05 & all_results[[dd]]$logOddsRatio > 0, dnn = c("Collection", paste(names(all_results[dd]), "\n                   sign. enriched (FDR < 5%)", sep = "")))
+print(x)
+  }
+```
+
+
+## Overview of significantly depleted genomic features
+
+```{r}
+for(dd in names(all_results)){
+  x = table(all_results[[dd]]$collection, all_results[[dd]]$p.adj < 0.05 & all_results[[dd]]$logOddsRatio < 0, dnn = c("Collection", paste(names(all_results[dd]), "\n                   sign. depleted (FDR < 5%)", sep = "")))
+print(x)
+}
+```
+
+```{r}
+subsetLOLA_res <- function(x) {
+  
+  subset(x, p.adj < 0.05)
+  }
+
+all_results <- lapply(all_results, subsetLOLA_res)
+
+
+# there are some rows with -infinite logOdssRatios (which means Oddsratio = 0). Remove them
+
+subsetLOLA_res <- function(x){
+   subset(x, OddsRatio != 0)
+ }
+
+all_results <- lapply(all_results, subsetLOLA_res)
+```
+
+
+```{r}
+subsetLOLA_res <- function(x){
+  subset(x, collection == "cistrome_epigenome" | collection == "encode_tfbs" | collection == "encode_segmentation" | collection == "ucsc_features")
+}
+
+all_results = lapply(all_results, subsetLOLA_res)
+
+# determine legend colors for all collections:
+
+# color_fun = function(x){
+#   min(x$logOddsRatio)
+# }
+# 
+# lapply(all_results, color_fun)
+
+
+breaksList = seq(-7.8, 5.4, by = 0.6)
+
+# 13 blues and 9 yellows
+
+colors_blue = brewer_pal("seq")(8)
+colors_blue = gradient_n_pal(colors_blue)(seq(0,1,length.out = 13))
+
+colors_yell = brewer_pal("seq", "YlOrRd")(8)
+colors_yell = gradient_n_pal(colors_yell[1:6])(seq(0,1,length.out = 9))
+
+colors = c(rev(colors_blue), colors_yell)
+```
+
+## Cistrome-Epigenome
+
+```{r}
+cisepi <- lapply(all_results, function(x) subset(x, collection == "cistrome_epigenome") )
+cisepi <- lapply(cisepi, function(x) {x[order(x$logOddsRatio),]; return(x)} ) 
+cisepi <- lapply(cisepi, function(x) {x = x[, c("logOddsRatio", "cellType", "antibody")]; return(x)}  )
+
+# select histone marks
+
+sel_h_marks = c("H3K4me3",
+                 "H3K9me3",
+                 "H3K27me3",
+                 "H3K36me3",
+                 "H3K9ac",
+                 "H3K14ac",
+                 "H3K27ac",
+                 "H3K4me1")
+
+# H3K4me3 is enriched in transcriptionally active promoters
+# H3K9me3 is found in constitutively repressed genes
+# H3K27me3 is found in facultatively repressed genes
+# H3K36me3 is found in actively transcribed gene bodies
+# H3K9ac is found in actively transcribed promoters
+# H3K14ac is found in actively transcribed promoters
+# H3K27ac distinguishes active enhancers from poised enhancers
+
+cisepi = lapply(cisepi, function(x) subset(x, antibody %in% sel_h_marks))
+
+# determine breaks list
+
+# funfun = function(x){
+#  max(x$logOddsRatio)
+# }
+# 
+# bb = lapply(cisepi, funfun)
+# bb
+
+# 12 blues, 3 reds, when all TFs are included.
+
+#breaksList = seq(-4.8, 1.8, by = 0.6)
+#breaksList = seq(-7.2, 3, by = 0.6)
+
+#colors =  c("#FC4E2A", "#FEB24C", "#FFFFCC", "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1", "#6BAED6", "#4292C6", "#2171B5", "#08519C")
+
+
+# colors_blue = brewer_pal("seq")(8)
+# colors_blue = gradient_n_pal(colors_blue)(seq(0,1,length.out = 12))
+# 
+# colors_yell = brewer_pal("seq", "YlOrRd")(8)
+# colors_yell = gradient_n_pal(colors_yell[1:6])(seq(0,1,length.out = 9))
+# 
+# colors = c(rev(colors_blue), colors_yell[1:6])
+
+sub_fun = function(x)
+{
+  if(is.null(x) || nrow(x)<1) return()
+  dcast(x, formula = antibody ~ cellType, value.var = "logOddsRatio")
+}
+
+cisepi = lapply(cisepi, sub_fun)
+
+for(dd in names(cisepi)){
+  if(is.null(cisepi[[dd]]) || nrow(cisepi[[dd]]) < 1 ) next
+  rownames(cisepi[[dd]]) <- cisepi[[dd]]$antibody
+  cisepi[[dd]]$antibody = NULL
+  pheatmap(cisepi[[dd]], cluster_rows = F, cluster_cols = F, main = as.character(dd), color = colorRampPalette(colors)(length(breaksList)), breaks = breaksList, cellwidth = 15, cellheight = 15)  }
+```
+
+
+## Encode Segmentation
+
+```{r}
+sub_fun <- function(x) {
+  
+  subset(x, collection == "encode_segmentation")
+}
+
+encseg <- lapply(all_results, sub_fun)
+
+encseg <- lapply(encseg, function(x){x[order(x$logOddsRatio),]})
+
+
+encseg_fun <- function(x){
+cbind(x, info = paste(x$description, "\n", "(", x$cellType, ")"))
+  }
+
+encseg <- lapply(encseg, encseg_fun)
+
+
+sub_fun <- function(x)
+  {
+  x = x[, c("logOddsRatio", "cellType", "description")]
+}
+
+encseg = lapply(encseg, sub_fun)
+
+# determine breaks list
+
+# funfun = function(x){
+#  max(x$logOddsRatio)
+# }
+# 
+# bb = lapply(encseg, funfun)
+# bb
+
+# breaksList = seq(-6, 3, by = 0.6)
+# 
+# colors = c(rev(colors_blue[1:10]), colors_yell[1:5])b
+
+sub_fun = function(x)
+{
+  if(is.null(x) || nrow(x)<1) return()
+  dcast(x, formula = description ~ cellType, value.var = "logOddsRatio")
+}
+
+encseg = lapply(encseg, sub_fun)
+
+for(dd in names(encseg)){
+  rownames(encseg[[dd]]) <- encseg[[dd]]$description
+  encseg[[dd]]$description = NULL
+  pheatmap(encseg[[dd]], cluster_rows = F, cluster_cols = F, main = as.character(dd), color = colorRampPalette(colors)(length(breaksList)), breaks = breaksList, cellwidth = 15, cellheight = 15)
+  }
+```
+
+## The ENCODE TFBS Collection
+
+```{r}
+sub_fun <- function(x) {
+  
+  subset(x, collection == "encode_tfbs")
+}
+
+encode_tfbs <- lapply(all_results, sub_fun)
+
+
+encode_tfbs <- lapply(encode_tfbs, function(x){x[order(x$logOddsRatio),]})
+
+
+
+
+
+# There are too many. Subset for embryonic stem cells and mammary gland cells
+
+sel_cell_lines = c("H1hesc",
+                   "Embryonic Stem Cell",
+                   "H1-hESC",
+                   "HUVEC",
+                   "Huvec",
+                   "Endoderm",
+                   "Caco-2(proliferating)",
+                   "Caco-2(differentiated)",
+                   "HepG2 liver cells",
+                   "normal liver cells",
+                   "HeLa-S3",
+                   "HepG2")
+
+
+subsetLOLA_res <- function(x) {
+
+subset(x, x$cellType %in% sel_cell_lines)
+  }
+
+encode_tfbs <- lapply(encode_tfbs, subsetLOLA_res)
+
+
+
+#selected TFs:
+sel_TFs = c("CTCF", "EZH2_(39875)", "Pol2", "Pol2-4H8", "Pol2(b)", "Pol2(phosphoS2", "SUZ12")
+
+subsetLOLA_res <- function(x) {
+
+subset(x, x$antibody %in% sel_TFs)
+ }
+
+encode_tfbs <- lapply(encode_tfbs, subsetLOLA_res)
+
+
+sub_fun = function(x){
+  x = x[!duplicated(x$description),]
+}
+#DF[!duplicated(DF$ID), ]
+
+encode_tfbs = lapply(encode_tfbs, sub_fun)
+
+sub_fun <- function(x){
+   cbind(x, info = sapply(strsplit(x$antibody, "_", fixed = TRUE), function(x) (x[1])))
+ }
+
+encode_tfbs <- lapply(encode_tfbs, sub_fun)
+
+sub_fun <- function(x)
+  {
+  x = x[, c("logOddsRatio", "cellType", "info")]
+}
+
+encode_tfbs = lapply(encode_tfbs, sub_fun)
+
+
+# determine breaks list
+
+# funfun = function(x){
+#  min(x$logOddsRatio)
+# }
+# 
+# bb = lapply(encode_tfbs, funfun)
+# bb
+
+# breaksList = seq(-6.0, 5.4, by = 0.6)
+# 
+# colors = c(rev(colors_blue[1:10]), colors_yell[1:9])
+
+
+sub_fun = function(x)
+{
+  if(is.null(x) || nrow(x)<1) return()
+  dcast(x, formula = info ~ cellType, value.var = "logOddsRatio")
+}
+
+
+encode_tfbs = lapply(encode_tfbs, sub_fun)
+
+
+for(dd in names(encode_tfbs)){
+      rownames(encode_tfbs[[dd]]) <- encode_tfbs[[dd]]$info
+  encode_tfbs[[dd]]$info = NULL
+  pheatmap(encode_tfbs[[dd]], cluster_rows = F, cluster_cols = F, main = as.character(dd), color = colorRampPalette(colors)(length(breaksList)), breaks = breaksList, cellwidth = 15, cellheight = 15)
+  }
+```
+
+
+## The UCSC Features Collection
+
+```{r}
+sub_fun <- function(x) {
+  
+  subset(x, collection == "ucsc_features")
+}
+
+ucfea <- lapply(all_results, sub_fun)
+
+
+ucfea <- lapply(ucfea, function(x){x[order(x$logOddsRatio),]})
+
+
+ucfea_fun <- function(x){
+  cbind(x, info = gsub("UCSC", "", x$description))
+}
+
+ucfea <- lapply(ucfea, ucfea_fun)
+
+
+
+sub_fun <- function(x)
+  {
+  x = x[, c("logOddsRatio", "info")]
+}
+
+ucfea = lapply(ucfea, sub_fun)
+
+
+# determine breaks list
+
+# funfun = function(x){
+#  max(x$logOddsRatio)
+# }
+# 
+# bb = lapply(ucfea, funfun)
+# bb
+# 
+# breaksList = seq(-3.6, 4.2, by = 0.6)
+# 
+# colors = c(rev(colors_blue[1:6]), colors_yell[1:7])
+
+for(dd in names(ucfea)){
+      rownames(ucfea[[dd]]) <- ucfea[[dd]]$info
+  ucfea[[dd]]$info = NULL
+  pheatmap(ucfea[[dd]], cluster_rows = F, cluster_cols = F, main = as.character(dd), color = colorRampPalette(colors)(length(breaksList)), breaks = breaksList, cellwidth = 15, cellheight = 15, show_colnames = F)
+  }
+```
+

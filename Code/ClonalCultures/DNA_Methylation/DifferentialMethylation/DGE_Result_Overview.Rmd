@@ -1,0 +1,244 @@
+---
+title: "Overview Differential Methalyation analysis"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+
+library(VennDiagram)
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+library(grid)
+
+result_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+```
+
+
+```{r}
+order_df <- function(d, column, decreasing = F) {return(d[order(d[[column]], decreasing = decreasing),])}
+```
+
+```{r}
+all_hyper_cpg <- list()
+all_hypo_cpg <- list()
+```
+
+
+# IM vs. Non-IM, only new (EPIC) samples
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_annotated.RData") )
+im_nonim_results <- all_results_betas_annotated[["IMvsNonIM_592_594_avg"]]
+im_nonim_results$gene_symbol = strsplit(im_nonim_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+
+```
+
+
+We use |log2FC| > 0.2 and raw pvalue < 0.001 as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp =im_nonim_results 
+
+hyper_cpg_592_594 = subset(tmp, logFC > 0.2 & P.Value < 0.001)
+hyper_cpg_592_594$gene_symbol = strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & P.Value < 0.001)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM"
+all_hyper_cpg[[n]] <- hyper_cpg_592_594
+all_hypo_cpg[[n]] <- hypo_cpg_592_594
+
+```
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+
+# Most frequently hypermethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypermethylated genes")
+```
+
+
+# Most frequently hypomethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
+
+# IM and non-IM vs. healthy, only new (EPIC) samples
+
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+im_nonim_healthy_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
+im_nonim_healthy_results$gene_symbol = strsplit(im_nonim_healthy_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_nonim_healthy_results
+
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM_with_healthy"
+all_hyper_cpg[[n]] <- hyper_cpg_592_594
+all_hypo_cpg[[n]] <- hypo_cpg_592_594
+```
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+# Most frequently hypermethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypermethylated genes")
+```
+
+
+# Most frequently hypomethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
+# IM and non-IM vs. healthy, 450k + EPIC samples
+
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
+im_nonim_healthy_450k_EPIC_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
+im_nonim_healthy_450k_EPIC_results$gene_symbol = strsplit(im_nonim_healthy_450k_EPIC_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_nonim_healthy_450k_EPIC_results
+
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM_with_healthy_450k_and_EPIC"
+all_hyper_cpg[[n]] <- hyper_cpg_592_594
+all_hypo_cpg[[n]] <- hypo_cpg_592_594
+```
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+# Most frequently hypermethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypermethylated genes")
+```
+
+
+# Most frequently hypomethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=5}
+par(mar=c(5,10,4,1))
+with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
+# Overlaps
+
+## Hypermethylated CpGs
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hyper_cpg, function(x) x$Row.names), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+## Hypermethylated genes
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hyper_cpg, function(x) unique(x$gene_symbol)), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+## Intersecting hypermethylated genes
+
+```{r}
+intersect = c()
+for (n in names(all_hyper_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hyper_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, Row.names %in% all_hyper_cpg[[n]]$Row.names) 
+  }
+}
+
+intersect$gene_symbol |> table()
+
+```
+
+## Hypomethylated CpGs
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hypo_cpg, function(x) x$Row.names), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+
+
+## Hypomethylated genes
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hypo_cpg, function(x) unique(x$gene_symbol)), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+## Intersecting hypomethylated genes
+
+```{r}
+intersect = c()
+for (n in names(all_hypo_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hypo_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, Row.names %in% all_hypo_cpg[[n]]$Row.names) 
+  }
+}
+
+intersect$gene_symbol |> table()
+
+```

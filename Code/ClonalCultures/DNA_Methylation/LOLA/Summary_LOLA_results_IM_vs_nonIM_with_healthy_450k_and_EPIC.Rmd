@@ -1,0 +1,125 @@
+---
+title: "Summary of LOLA results - CpG level - ESGIv2+v1 IM vs nonIM, with healthy samples and both 450k + EPIC platforms "
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+library(scales)
+library(ggplot2)
+library(reshape2)
+```
+
+
+# Data
+
+LOLA was performed for DM, hyper-, and hypomethylated Cgs between the stomach regions using all Cgs of the normalized data set as the universe.
+
+Here I visualize the all results, including the collections 
+
+* Cistrome Epigenome
+* Encode Segmentation
+* Encode TFBS
+* UCSC Features
+* Roadmap Epigenome
+* Jaspar TF binding sites
+
+
+```{r}
+# Combine results from core + extended data bases
+load("../../../../Data/Processed/ClonalCultures/DNAm/LOLA_Core_results_IM_vs_nonIM_with_healthy_450k_EPIC.Rdata")
+
+# Fix logOddsRatio/OddsRatio columns - this is only necessary when using our own LOLA enrichment function which is based on previous, errorneous code from LOLA
+all_results_lola_core <- lapply(all_results_lola, function(x) {
+  x <- as.data.frame(x)
+  colnames(x) <- gsub("logOddsRatio","OddsRatio", colnames(x))  
+  x$logOddsRatio <- log2(x$OddsRatio)
+  
+  x$untreated = with(x, !complete.cases(treatment) | treatment == "None" | treatment == "No treatment" | treatment == "regular medium" | treatment == "serum_starved_media" | treatment == "serum_stimulated_media" | treatment == "full media" | treatment == "mock" | treatment == "No treatment(Antibody RAR _A704)" | treatment == "No treatment(Antibody RXR _sc774)" )
+  
+  return(x)
+  
+} )
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/LOLA_Ext_results_IM_vs_nonIM_with_healthy_450k_EPIC.Rdata")
+# Fix logOddsRatio/OddsRatio columns - this is only necessary when using our own LOLA enrichment function which is based on previous, errorneous code from LOLA
+all_results_lola_ext <- lapply(all_results_lola, function(x) {
+  x <- as.data.frame(x)
+  colnames(x) <- gsub("logOddsRatio","OddsRatio", colnames(x))
+  x$logOddsRatio <- log2(x$OddsRatio)
+  
+  x$untreated = with(x, !complete.cases(treatment) | treatment == "None" | treatment == "No treatment" | treatment == "regular medium" | treatment == "serum_starved_media" | treatment == "serum_stimulated_media" | treatment == "full media" | treatment == "mock" | treatment == "No treatment(Antibody RAR _A704)" | treatment == "No treatment(Antibody RXR _sc774)" )
+  
+  return(x)
+  
+} )
+```
+
+```{r}
+sel_columns = colnames(all_results_lola_core[[1]])
+all_results_lola_combined <- mapply(function(x,y) rbind(x[, sel_columns], y[, sel_columns]), all_results_lola_core, all_results_lola_ext, SIMPLIFY = F)
+```
+
+
+```{r}
+rm(all_results_lola, all_results_lola_core, all_results_lola_ext)
+
+all_results_lola_combined <- lapply(all_results_lola_combined, function(x) {
+  x$label = ifelse(x$collection %in% c("cistrome_cistrome", "cistrome_epigenome","ucsc_features","sheffield_dnase","encode_tfbs"), gsub("cistrome_cistrome |cistrome_epigenome ", "", x$description), 
+                   ifelse(x$collection=="encode_segmentation", paste0(x$description, "_", x$cellType),
+                          ifelse(x$collection == "codex", paste0(x$cellType, "_", x$antibody), 
+                                 ifelse(x$collection == "roadmap_epigenomics", ifelse(x$description == "roadmap_epigenomics", "DNase", gsub("roadmap_epigenomics ", "", x$description)), 
+                                        ifelse(x$description=="jaspar_motifs", gsub("\\.bed","", x$filename), "__MISSING__"  )))));
+    
+  x$factor = ifelse(x$collection %in% c("cistrome_cistrome", "cistrome_epigenome","encode_tfbs", "codex"), x$antibody, 
+                   ifelse(x$collection=="encode_segmentation", x$description,
+                          ifelse(x$collection == "sheffield_dnase", "DNase", 
+                                 ifelse(x$collection == "ucsc_features", x$description, 
+                                 ifelse(x$collection == "roadmap_epigenomics", ifelse(x$description == "roadmap_epigenomics", "DNase", x$antibody), 
+                                        ifelse(x$description=="jaspar_motifs", gsub("\\.bed","", x$filename), "__MISSING__"  ))))));
+  x$ID = paste0(x$collection, "_", x$description) |> make.unique()
+  return(x)
+})
+
+```
+
+```{r, eval=FALSE}
+#sel_celllines = c("H1-hESC", "HUVEC", "H1hesc", "Huvec", "Embryonic Stem Cell", "Endoderm")
+#sel_tissues = c()
+
+
+```
+
+```{r, fig.width=7, fig.height=4}
+for (n in names(all_results_lola_combined)) {
+  tmp <- all_results_lola_combined[[n]] |> as.data.frame()
+  for (d in unique(tmp$collection)) {
+    #sig <- subset(tmp, collection == d & p.adj < 0.05)
+    sig <- tmp[(tmp$collection==d & tmp$p.adj < 0.05),]
+    sig$label = make.unique(sig$label)
+    head(sig, 20) |> (\(x) {
+      x$logOddsRatio_fixed <- ifelse(is.infinite(x$logOddsRatio), sign(x$logOddsRatio) * 20, x$logOddsRatio)
+      #barplot(x$logOddsRatio_fixed, names.arg = x$filename, main=unique(x$collection), las=2 ) 
+      x<-x[order(x$logOddsRatio_fixed, decreasing = T),]
+      x$label = factor(x$label, levels = unique(x$label))
+      p <- ggplot(x, aes(x=label, y=logOddsRatio_fixed, fill=factor)) + geom_bar(stat="identity") + ggtitle(paste0(n, " - ", unique(x$collection))) + theme(axis.text.x = element_text(angle=45, hjust = 1)) + coord_cartesian(ylim = c(-5,5))
+      print(p)
+    } )()
+  }
+}
+```
+
+
+

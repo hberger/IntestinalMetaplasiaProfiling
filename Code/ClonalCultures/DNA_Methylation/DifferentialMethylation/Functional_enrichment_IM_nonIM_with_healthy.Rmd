@@ -1,0 +1,83 @@
+---
+title: "Functional enrichment DM sites - only clonal IM vs. non-IM"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(enrichR)
+
+result_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+```
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+```
+
+# Enrichment of DM genes in functional / genomic categories
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = all_results_betas_annotated[["IMvsNormalAntrum"]]
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+```
+
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+## Hypermethylated genes
+
+```{r}
+ zz = enrichr(hyper_genes_592_594, databases = c("ChEA_2016", "ARCHS4_TFs_Coexp", "ARCHS4_Kinases_Coexp", "Drug_Perturbations_from_GEO_up", "Drug_Perturbations_from_GEO_down", "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X",  "Genome_Browser_PWMs", "RNAseq_Automatic_GEO_Signatures_Human_Up", "RNAseq_Automatic_GEO_Signatures_Human_Down"   ))
+
+zz_df = do.call(rbind, mapply(function(x,n) {x$db=n; return(x)}, zz, names(zz), SIMPLIFY = F))
+zz_df$geneset_size = as.numeric(unlist(sapply(strsplit(zz_df$Overlap, "\\/"), `[`, 2)))
+zz_df$overlap_size = as.numeric(unlist(sapply(strsplit(zz_df$Overlap, "\\/"), `[`, 1)))
+zz_df$overlap_proportion = zz_df$overlap_size/zz_df$geneset_size
+zz_df = subset(zz_df, geneset_size >= 20)
+```
+
+```{r, fig.width=10, fig.height=5}
+for (n in unique(zz_df$db)) {
+  tmp = subset(zz_df, db==n)
+  tmp = tmp[order(tmp$Adjusted.P.value),]
+  with(head(tmp, 20), dotchart(-log10(Adjusted.P.value), labels = Term, pt.cex = overlap_proportion*10, pch=20, main = n, xlab="-log10(adj. p-value)"))
+}
+```
+
+
+## Hypomethylated genes
+
+```{r}
+ zz = enrichr(hypo_genes_592_594, databases = c("ChEA_2016", "ARCHS4_TFs_Coexp", "ARCHS4_Kinases_Coexp", "Drug_Perturbations_from_GEO_up", "Drug_Perturbations_from_GEO_down", "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X",  "Genome_Browser_PWMs", "RNAseq_Automatic_GEO_Signatures_Human_Up", "RNAseq_Automatic_GEO_Signatures_Human_Down"   ))
+
+zz_df = do.call(rbind, mapply(function(x,n) {x$db=n; return(x)}, zz, names(zz), SIMPLIFY = F))
+zz_df$geneset_size = as.numeric(unlist(sapply(strsplit(zz_df$Overlap, "\\/"), `[`, 2)))
+zz_df$overlap_size = as.numeric(unlist(sapply(strsplit(zz_df$Overlap, "\\/"), `[`, 1)))
+zz_df$overlap_proportion = zz_df$overlap_size/zz_df$geneset_size
+zz_df = subset(zz_df, geneset_size >= 20)
+```
+
+```{r, fig.width=10, fig.height=5}
+for (n in unique(zz_df$db)) {
+  tmp = subset(zz_df, db==n)
+  tmp = tmp[order(tmp$Adjusted.P.value),]
+  with(head(tmp, 20), dotchart(-log10(Adjusted.P.value), labels = Term, pt.cex = overlap_proportion*10, pch=20, main = n, xlab="-log10(adj. p-value)"))
+}
+```
