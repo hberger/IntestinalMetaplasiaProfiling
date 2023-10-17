@@ -1,0 +1,7 @@
+ANNOVAR_OUTPUT=../../../../../Data/Processed/PolyclonalCultures/WES/VariantCalls/calls_merged_ANNOVAR
+ANNOVAR_INPUT_FILE="-vcfinput ../../../../../Data/Processed/PolyclonalCultures/WES/VariantCalls/IManno.vcf"
+# annotate variants
+../../../../../Data/ExtSoftware/Annovar/annovar/table_annovar.pl $ANNOVAR_INPUT_FILE ../../../../../Data/ExtSoftware/Annovar/humandb_2021-03_hg38 -buildver hg38 -out $ANNOVAR_OUTPUT -remove \
+ -protocol refGene,phastConsElements100way,gwasCatalog,genomicSuperDups,gnomad211_exome,avsnp150,dbnsfp41a,cosmic70,clinvar_20210123 \
+ -operation g,r,r,r,f,f,f,f,f -nastring .
+

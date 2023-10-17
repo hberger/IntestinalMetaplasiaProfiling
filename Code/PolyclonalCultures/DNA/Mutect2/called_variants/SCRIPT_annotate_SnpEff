@@ -1,0 +1,13 @@
+PROJECT_NAME=ESGI_v2_GRCh38_WXS_calls
+
+#SNPEFF_FOLDER=/data_genome1/SharedSoftware/SnpEff
+SNPEFF_FOLDER=~/Work/Software/SnpEff/snpEff
+
+#GENOME_VERSION=GRCh38.86
+GENOME_VERSION=GRCh38.99
+
+java -Xmx4g -jar $SNPEFF_FOLDER/snpEff.jar -c $SNPEFF_FOLDER/snpEff.config $GENOME_VERSION ../${PROJECT_NAME}_merged.vcf  > ${PROJECT_NAME}_merged_SnpEff.vcf
+bgzip ${PROJECT_NAME}_merged_SnpEff.vcf
+tabix -p vcf ${PROJECT_NAME}_merged_SnpEff.vcf.gz
+
+
