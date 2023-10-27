@@ -1,0 +1,83 @@
+---
+title: "Stomach Methylation - WGS based classification, IM/non-IM vs. corresponding healthy samples, 450k + EPIC"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+```
+
+
+```{r}
+load("../../../../Data/Processed/ClonalCultures/DNAm/myNorm_IM_nonIM_and_healthy_stomach_450k_and_EPIC.RData")
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/myLoad_IM_nonIM_and_healthy_stomach_450k_and_EPIC_combined.RData")
+
+ed = myLoad$pd |> as.data.frame()
+ed$SampleLabel <- ifelse(ed$Project=="2020-186-ILL", paste0(ed$Sample_Group, "_", ed$PatientID, "_", ed$CloneID), ed$Sample_Name )
+```
+
+```{r}
+cpgs <- read_excel("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Supp/41586_2022_5580_MOESM4_ESM.xlsx", sheet = "Table S12", skip = 1) |> as.data.frame()
+
+cpgs_filt <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm))
+```
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt$`CpG accession`, ]
+
+row_anno = cpgs_filt[, "Type",drop=F]
+rownames(row_anno) <- cpgs_filt$`CpG accession`
+
+pheatmap(mm, scale="none", cluster_rows = F, show_rownames = F, annotation_row = row_anno)
+```
+
+
+```{r, fig.width=8, fig.height=6}
+mm_avg = limma::avereps(mm, row_anno[rownames(mm), "Type"])
+
+pheatmap(mm_avg, scale="none", cluster_rows = T, labels_col = ed[colnames(mm), "SampleLabel"])
+```
+
+
+```{r}
+cpgs_filt2 <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm) & Type %in% c("Gastric-Ep","Colon-Ep","Small-Int-Ep"))
+```
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt2$`CpG accession`, ]
+
+row_anno = cpgs_filt2[, "Type",drop=F]
+rownames(row_anno) <- cpgs_filt2$`CpG accession`
+
+pheatmap(mm, scale="none", cluster_rows = F, show_rownames = F, annotation_row = row_anno, labels_col = ed[colnames(mm), "SampleLabel"])
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

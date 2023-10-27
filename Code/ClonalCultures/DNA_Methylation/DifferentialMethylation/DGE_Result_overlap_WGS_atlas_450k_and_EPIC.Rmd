@@ -1,0 +1,200 @@
+---
+title: "Overview DGE in IM and non-IM vs. healthy, only new (EPIC) samples - WGS atlas"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(GenomicRanges)
+library(data.table)
+library(VennDiagram)
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+library(grid)
+
+result_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+```
+
+
+```{r}
+order_df <- function(d, column, decreasing = F) {return(d[order(d[[column]], decreasing = decreasing),])}
+```
+
+
+```{r}
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+full_anno_epic = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+cpg_pos_epic <- full_anno_epic[, c("chr","pos")] |> as.data.frame()
+rm(full_anno_epic)
+gc()
+cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=pos), ID=rownames(cpg_pos_epic)) )
+```
+
+# WGS atlas data
+
+  - list of unmethylated regions per celltype (supp data 1). From this list we extract the following data sets:
+     - list of CpG that are unmethylated only in a single cell type
+     - list of CpG that are unmethylated in gastrointestinal epithelal cells (gastric, SI, colon) but not in any other cell type
+     - list of CpG that are unmethylated in one of the gastrointestinal epithelal cells (gastric, SI, colon) but not in the other two
+
+## Cell type specific unmethylated regions
+
+```{r}
+inp_files <- list.files("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Supp/Unmeth_regions_per_celltype_BEDs/", pattern = "*.bed", full.names = T)
+
+wgs_celltype_um <- list()
+wgs_celltype_um_epic_cpg <- list()
+for (f in inp_files) {
+  sn <- gsub("\\.4CpGs\\.U85\\.f85\\.bed", "", basename(f))
+  tmp <- data.table::fread(f, header=T)
+  tmp$celltype <- sn
+  wgs_celltype_um[[sn]] <- tmp
+  
+  tmp_ranges = GRanges(tmp$chr, IRanges(tmp$from, tmp$to))
+  ovlp <- suppressWarnings(findOverlaps(cpg_pos_epic_ranges, tmp_ranges))
+  
+  wgs_celltype_um_epic_cpg[[sn]] <- data.table(cpg_id = cpg_pos_epic_ranges[queryHits(ovlp)]$ID, tmp[subjectHits(ovlp), 6:ncol(tmp)], key = "cpg_id")
+  
+}
+```
+
+```{r}
+xx <- lapply(wgs_celltype_um_epic_cpg, function(x) x[, c("cpg_id", "celltype")] )  |> do.call(rbind, args=_)
+
+xx_c <- sort(table(xx$cpg_id), decreasing = T)
+
+celltype_specific_unmeth_cpg <- xx_c[xx_c == 1] |> names()
+
+wgs_celltype_specific_epc_cpg <- lapply(wgs_celltype_um_epic_cpg, function(x) x[x$cpg_id %in% celltype_specific_unmeth_cpg])
+```
+
+
+
+```{r}
+all_hyper_cpg <- list()
+all_hypo_cpg <- list()
+```
+
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
+im_nonim_healthy_450k_EPIC_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
+im_nonim_healthy_450k_EPIC_results$gene_symbol = strsplit(im_nonim_healthy_450k_EPIC_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_nonim_healthy_450k_EPIC_results
+n_total_cpgs <- nrow(tmp)
+
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM_with_healthy_450k_and_EPIC"
+all_hyper_cpg[[n]] <- hyper_cpg_592_594
+all_hypo_cpg[[n]] <- hypo_cpg_592_594
+```
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+#### Overlap with unmethylated cell-type specific CpG blocks from WGS atlas
+
+
+```{r}
+all_ovlp_hyper <- list()
+all_ovlp_hypo <- list()
+
+ovlp_res_hyper <- list()
+ovlp_res_hypo <- list()
+
+for (n in names(wgs_celltype_um_epic_cpg)) {
+  tmp <- wgs_celltype_specific_epc_cpg[[n]]
+  all_ovlp_hyper[[n]] <- tmp[tmp$cpg_id %in% hyper_cpg_592_594$Row.names] 
+  all_ovlp_hypo[[n]] <- tmp[tmp$cpg_id %in% hypo_cpg_592_594$Row.names]
+  
+  ovlp_res_hyper[[n]] <- data.frame(celltype = n, ovlp=nrow(all_ovlp_hyper[[n]]), total_dm = nrow(hyper_cpg_592_594), total_specific_um = nrow(tmp))
+  ovlp_res_hypo[[n]] <- data.frame(celltype = n, ovlp=nrow(all_ovlp_hypo[[n]]), total_dm = nrow(hypo_cpg_592_594), total_specific_um = nrow(tmp))
+}
+```
+
+
+```{r, fig.width==10}
+par(mar=c(10,4,4,1), cex.main = 0.8)
+sapply(all_ovlp_hypo, nrow) |> sort() |> barplot(las=2, cex.names  = .7, main="Overlap of hypomethylated CpG in IM with cell type specific unmethylated CpG from WGS Atlas")
+
+par(mar=c(10,4,4,1), cex.main = 0.8)
+sapply(all_ovlp_hyper, nrow) |> sort() |> barplot(las=2, cex.names  = .7, main="Overlap of hypermethylated CpG in IM with cell type specific unmethylated CpG from WGS Atlas")
+
+```
+
+The highest overlap of hypermethlyated CpG is with CpG sites specifically unmethylated in gastric epithelial cells
+
+
+```{r}
+ovlp_all_hypo_df <- do.call(rbind, ovlp_res_hypo)
+ovlp_all_hyper_df <- do.call(rbind, ovlp_res_hyper)
+
+add_OR <- function(x) {
+  x$n_nondm_nonspec <- with(x, n_total_cpgs - total_specific_um - total_dm + ovlp)
+  x$n_nondm_spec <- with(x, total_specific_um - ovlp)
+  x$n_dm_nonspec <- with(x, total_dm - ovlp)
+  x$p_spec <- with(x, ovlp/total_specific_um)
+  x$p_non_spec <- with(x, n_dm_nonspec/(n_dm_nonspec + n_nondm_nonspec) )
+  x$rr <- with(x, p_spec / p_non_spec)
+  x$or <- with(x, (ovlp/n_nondm_spec) / (n_dm_nonspec/n_nondm_nonspec)  )
+  x$lor <- log(x$or)
+  x$lor_se <- with(x, sqrt(1/ovlp + 1/n_dm_nonspec + 1/n_nondm_spec + 1/n_nondm_nonspec))
+  x$or_ci_upper <- exp(x$lor + 1.96 * x$lor_se)
+  x$or_ci_lower <- exp(x$lor - 1.96 * x$lor_se)
+  return(x)
+}
+
+ovlp_all_hyper_df <- add_OR(ovlp_all_hyper_df)
+ovlp_all_hyper_df <- ovlp_all_hyper_df[order(ovlp_all_hyper_df$or_ci_lower, decreasing = T),]
+ovlp_all_hyper_df$celltype = factor(ovlp_all_hyper_df$celltype, levels = ovlp_all_hyper_df$celltype)
+
+ovlp_all_hypo_df <- add_OR(ovlp_all_hypo_df)
+ovlp_all_hypo_df <- ovlp_all_hypo_df[order(ovlp_all_hypo_df$or_ci_lower, decreasing = T),]
+ovlp_all_hypo_df$celltype = factor(ovlp_all_hypo_df$celltype, levels = ovlp_all_hypo_df$celltype)
+
+```
+
+```{r, fig.width=8, fig.height=4}
+ggplot(ovlp_all_hyper_df, aes(x=celltype, y = or)) + geom_bar(stat ="identity") + geom_errorbar(aes(ymin=or_ci_lower, ymax=or_ci_upper)) + theme(axis.text.x = element_text(angle=45, hjust = 1)) + geom_hline(yintercept = 1, lty=2, col="red") + ggtitle("OR of hypermethylation at CpG blocks unmethylated in specific celltypes only") + geom_text(aes(x=celltype, y=12.5, label=paste0(ovlp, "/", total_specific_um)), angle=90, hjust=1, size = 3)
+
+ggplot(ovlp_all_hypo_df, aes(x=celltype, y = or)) + geom_bar(stat ="identity") + geom_errorbar(aes(ymin=or_ci_lower, ymax=or_ci_upper)) + theme(axis.text.x = element_text(angle=45, hjust = 1)) + geom_hline(yintercept = 1, lty=2, col="red") + ggtitle("OR of hypomethylation at CpG blocks unmethylated in specific celltypes only")
+
+```
+
+
+# Sites specifically unmethylated in Stomach hypermethylated in IM
+
+```{r}
+tmp <- all_ovlp_hyper[["Gastric-Ep"]]
+tmp <- tmp[order(tmp$neigh_gene), ]
+
+tmp
+```
+
+# Sites specifically unmethylated in Stomach hypomethylated in IM
+
+```{r}
+tmp <- all_ovlp_hypo[["Gastric-Ep"]]
+tmp <- tmp[order(tmp$neigh_gene), ]
+
+tmp
+```
+

@@ -98,8 +98,6 @@ all_results_lola_combined <- lapply(all_results_lola_combined, function(x) {
 ```{r, eval=FALSE}
 #sel_celllines = c("H1-hESC", "HUVEC", "H1hesc", "Huvec", "Embryonic Stem Cell", "Endoderm")
 #sel_tissues = c()
-
-
 ```
 
 ```{r, fig.width=7, fig.height=4}

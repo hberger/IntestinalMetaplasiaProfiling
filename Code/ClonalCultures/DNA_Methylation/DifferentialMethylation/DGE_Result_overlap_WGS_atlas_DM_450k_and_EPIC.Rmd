@@ -1,0 +1,116 @@
+---
+title: "Overview DGE in IM and non-IM vs. healthy, only new (EPIC) samples - WGS atlas DM sites between Colon/SI and Antrum"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(GenomicRanges)
+library(data.table)
+library(VennDiagram)
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+library(grid)
+
+result_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+```
+
+
+```{r}
+order_df <- function(d, column, decreasing = F) {return(d[order(d[[column]], decreasing = decreasing),])}
+```
+
+
+```{r}
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+full_anno_epic = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+cpg_pos_epic <- full_anno_epic[, c("chr","pos")] |> as.data.frame()
+rm(full_anno_epic)
+gc()
+cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=pos), ID=rownames(cpg_pos_epic)) )
+```
+
+# WGS atlas data
+
+  - DM sites between Colon and Antrum or SI and Antrum
+
+```{r}
+all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/ClonalCultures/DNAm/WGS_gut_DM.rds")
+
+wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
+  x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
+  x$direction <- ifelse(x$logFC > 0.2, "hyper", "hypo")
+  return(x)
+})
+```
+
+
+
+```{r}
+all_hyper_cpg <- list()
+all_hypo_cpg <- list()
+```
+
+
+```{r}
+load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
+im_nonim_healthy_450k_EPIC_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
+im_nonim_healthy_450k_EPIC_results$gene_symbol = strsplit(im_nonim_healthy_450k_EPIC_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_nonim_healthy_450k_EPIC_results
+n_total_cpgs <- nrow(tmp)
+
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM_with_healthy_450k_and_EPIC"
+all_hyper_cpg[[n]] <- hyper_cpg_592_594
+all_hypo_cpg[[n]] <- hypo_cpg_592_594
+```
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+
+#### Overlap with WGS atlas gut DM sites
+
+
+```{r}
+all_ovlp_hyper <- list()
+all_ovlp_hypo <- list()
+
+ovlp_res_hyper <- list()
+ovlp_res_hypo <- list()
+
+for (n in names(wgs_sig)) {
+  tmp <- wgs_sig[[n]]
+  tmp$comparison_wgs <- n
+  all_ovlp_hyper[[n]] <- merge(hyper_cpg_592_594, tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+  all_ovlp_hypo[[n]] <- merge(hypo_cpg_592_594, tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+}
+
+all_ovlp_hyper_df <- do.call(rbind, all_ovlp_hyper)
+all_ovlp_hypo_df <- do.call(rbind, all_ovlp_hypo)
+```
+
+
+```{r}
+table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$direction, useNA = "always", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$direction, useNA = "always", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+```
