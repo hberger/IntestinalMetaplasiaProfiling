@@ -1,0 +1,130 @@
+---
+title: "RNA-Seq analysis for phenotyping of gastric clones HISAT2 alignment to hg38, featureCounts - Visualizations"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, warning=FALSE, message=FALSE}
+rm(list=ls())
+
+#suppressMessages(library(xlsx))
+library(readxl)
+library(reshape2)
+library(pheatmap)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(fgsea)
+library(data.table)
+library(homologene)
+library(GSVA)
+
+result_folder = "../../../../Results/ClonalCultures/RNA/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+library(ggvenn)
+
+```
+
+```{r}
+load(file.path(result_folder, "DGE_analysis_image.Rdata"))
+norm_counts = read.table(file.path(result.folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
+colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+```
+
+<!-- ```{r, message=FALSE, warning=FALSE, results='hide'} -->
+<!-- #gsea_gmt_file = "/data_genome1/References/GeneSets/MSigDB/V6.2/msigdb.v6.2.symbols.gmt" -->
+<!-- gsea_gmt_file = "/home/hilmar/Work/References/GeneSets/MSigDB/v7.1/msigdb.v7.1.symbols.gmt" -->
+<!-- gsets <- gmtPathways(gsea_gmt_file) -->
+<!-- ``` -->
+
+
+```{r}
+tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+
+tmp = subset(tmp, p_val_adj < 0.05 & avg_log2FC > 0.5)
+
+sc_sets = split(tmp$gene, tmp$cluster)
+
+```
+
+```{r, fig.width=8, fig.height=6}
+all_ovlp = list()
+sel_comparisons = c("IM_vs_non-IM_all_samples","IM_591_vs_NonIM","IM_592_vs_NonIM","IM_594_vs_NonIM","IM_all_vs_NormalAntrum","Colon_vs_HealthyAntrum","Duod_vs_HealthyAntrum")
+fc_threshold = 0.5
+for (n in sel_comparisons) {
+  tmp = all_results[[n]]
+  r_up = subset(tmp, padj < 0.05 & log2FoldChange > fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+  r_down = subset(tmp, padj < 0.05 & log2FoldChange < -fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+  
+  for (gs in names(sc_sets)) {
+    set_genes = sc_sets[[gs]]
+    all_ovlp[[paste0(n,"_UP_",gs)]] = intersect(set_genes, r_up$GeneSymbol)  
+    all_ovlp[[paste0(n,"_DOWN_",gs)]] = intersect(set_genes, r_down$GeneSymbol)
+    
+    ll = list()
+    ll[[gs]]=set_genes
+    ll[[paste0(n,"_UP")]] = r_up$GeneSymbol
+    ll[[paste0(n,"_DOWN")]] = r_down$GeneSymbol
+    
+    p = ggvenn(ll, set_name_size = 4) 
+    print(p)
+    
+  }
+}
+  
+  
+```
+
+```{r}
+lapply(all_ovlp[grep("Enterocyte a \\(prox\\)|Colonocyte", names(all_ovlp))], sort)
+#lapply(all_ovlp[grep("Colonocyte", names(all_ovlp))], sort)
+#lapply(all_ovlp[grep("SINGH_CDX2_DN", names(all_ovlp))], sort)
+```
+
+
+# GSVA
+
+```{r}
+count_mat = as.matrix(norm_counts[,grepl("^X4", colnames(norm_counts))])
+rownames(count_mat) <- norm_counts$GeneSymbol
+res_gsva = gsva(count_mat, sc_sets)
+#colnames(res_gsva) = ed[gsub("X","", colnames(res_gsva)), "Library.Name"]
+
+col_anno = ed[gsub("^X", "", colnames(count_mat)), c("Patient","Condition")]
+rownames(col_anno) = paste0("X", rownames(col_anno))
+
+```
+
+```{r, fig.width=12, fig.height=6}
+
+pheatmap(res_gsva, annotation_col = col_anno, labels_col = ed[gsub("^X", "", colnames(count_mat)), "Library.Name"])
+
+res_gsva_s <- res_gsva[, order(col_anno[colnames(res_gsva), "Condition"], col_anno[colnames(res_gsva), "Patient"] ) ]
+pheatmap(res_gsva_s, annotation_col = col_anno, labels_col = ed[gsub("^X", "", colnames(res_gsva_s)), "Library.Name"], cluster_cols = F)
+
+```
+
+```{r, fig.width=12, fig.height=8}
+rr_ts <- reshape2::melt(res_gsva)
+colnames(rr_ts) <- c("Cluster", "Sample", "Score")
+rr_ts$Sample <- gsub("^X","", rr_ts$Sample)
+
+rr_ts <- merge(rr_ts, ed, by.x="Sample", by.y="sampleID", all.x=T)
+rr_ts$Patient <- ifelse(rr_ts$Condition=="Normal Antrum", "Normal Antrum", ifelse(rr_ts$Condition %in% c("Colon", "Duodenum"), "Intestine", rr_ts$Patient))
+ggplot(rr_ts, aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+
+ggplot(subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S")), aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Only good normal stomach samples")
+```
+

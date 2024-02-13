@@ -1,0 +1,130 @@
+---
+title: "Stomach Methylation - WGS based classification, IM/non-IM vs. corresponding healthy samples"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+library(ggplot2)
+
+result_folder = paste("../../../../Results/PolyclonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+source("../../../Utils/pheatmap.type.R")
+
+```
+
+
+# Overview
+
+We here use data on CpGs specifically unmethylated in selected tissues from the WGS Atlas to classify samples. 
+
+```{r}
+load(file.path(data_storage_folder, "myNorm_IM_nonIM_and_healthy_stomach.RData") )
+ed <- as.data.frame(ed)
+```
+
+```{r}
+cpgs <- read_excel("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Supp/41586_2022_5580_MOESM4_ESM.xlsx", sheet = "Table S12", skip = 1) |> as.data.frame()
+
+cpgs_filt <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm))
+```
+
+# All specifically unmethylated CpGs from the WGS Atlas represented on the 450k array 
+
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt$`CpG accession`, ]
+
+row_anno = cpgs_filt[, "Type",drop=F]
+rownames(row_anno) <- cpgs_filt$`CpG accession`
+
+pheatmap(mm, scale="none", cluster_rows = F, show_rownames = F, annotation_row = row_anno, labels_col = ed[colnames(mm), "Sample_Label"])
+```
+
+
+```{r, fig.width=8, fig.height=6}
+mm_avg = limma::avereps(mm, row_anno[rownames(mm), "Type"])
+
+pheatmap(mm_avg, scale="none", cluster_rows = T, labels_col = ed[colnames(mm), "Sample_Label"], main = "All specifically unmethylated CpGs in the IM cohort, averaged per tissue type")
+```
+
+
+# Only Gastric/Colon/SI specific CpGs
+
+```{r}
+cpgs_filt2 <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm) & Type %in% c("Gastric-Ep","Colon-Ep","Small-Int-Ep"))
+```
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt2$`CpG accession`, ]
+
+row_anno = cpgs_filt2[, "Type",drop=F]
+rownames(row_anno) <- cpgs_filt2$`CpG accession`
+
+pheatmap(mm, scale="none", cluster_rows = F, show_rownames = F, annotation_row = row_anno, labels_col = ed[colnames(mm), "Sample_Label"])
+pheatmap.type(mm, type="Type", conditions = c("Gastric-Ep","Colon-Ep","Small-Int-Ep"), scale="none", show_rownames = F, annRow = row_anno, labels_col = ed[colnames(mm), "Sampl_eLabel"])
+```
+
+```{r}
+cpgs_filt3 <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm) & Type %in% c("Gastric-Ep"))
+```
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt3$`CpG accession`, ]
+
+mm_ts <- reshape2::melt(mm)
+colnames(mm_ts) <- c("cpg_id", "sample_id", "beta")
+
+ed$Sample_Group2 <- ifelse(ed$Project == "ZZU", paste0("Polyclonal-",ed$Sample_Group), paste0("Healthy-", ed$Stomach_site))
+
+ed$Sample_Group2 <- factor(ed$Sample_Group2, levels=c("Healthy-Antrum","Healthy-Corpus","Healthy-Fundus","Polyclonal-NON_IM","Polyclonal-IM"))
+
+mm_ts$group <- ed[mm_ts$sample_id, "Sample_Group2"]
+
+ggplot(mm_ts, aes(x=group, y=beta, col=group)) + geom_point() + facet_wrap(~cpg_id) + theme(axis.text.x = element_text(angle=45, hjust=1)) + stat_summary(fun = "mean", geom = "crossbar") + ggtitle("Gastric specific unmethylated CpGs across the IM cohort samples")
+```
+
+```{r}
+cpgs_filt3 <- subset(cpgs, cpgs$`CpG accession` %in% rownames(myNorm) & Type %in% c("Colon-Ep","Small-Int-Ep"))
+```
+
+```{r, fig.width=8, fig.height=8}
+mm = myNorm[cpgs_filt3$`CpG accession`, ]
+
+mm_ts <- reshape2::melt(mm)
+colnames(mm_ts) <- c("cpg_id", "sample_id", "beta")
+
+ed$Sample_Group2 <- ifelse(ed$Project == "ZZU", paste0("Polyclonal-",ed$Sample_Group), paste0("Healthy-", ed$Stomach_site))
+
+ed$Sample_Group2 <- factor(ed$Sample_Group2, levels=c("Healthy-Antrum","Healthy-Corpus","Healthy-Fundus","Polyclonal-NON_IM","Polyclonal-IM"))
+
+mm_ts$group <- ed[mm_ts$sample_id, "Sample_Group2"]
+
+ggplot(mm_ts, aes(x=group, y=beta, col=group)) + geom_point() + facet_wrap(~cpg_id) + theme(axis.text.x = element_text(angle=45, hjust=1)) + stat_summary(fun = "mean", geom = "crossbar") + ggtitle("intestinal (Colon/SI) specific unmethylated CpGs across the IM cohort samples")
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

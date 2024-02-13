@@ -1,0 +1,710 @@
+---
+title: "MB044 RNA-Seq analysis for phenotyping of gastric clones - HISAT2 mapping, featureCount for counting"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(readxl)
+library(xtable)
+library(writexl)
+library(pheatmap)
+library(reshape2)
+library(knitr)
+library(data.table)
+library(limma)
+
+library(EnhancedVolcano)
+
+#reticulate::conda_install("r-reticulate", c("python-igraph","pandas","umap-learn"), channel = "conda-forge")
+#library(umap)
+#library(leiden)
+library(uwot)
+library(igraph)
+
+result_folder = "../../../../Results/ClonalCultures/RNA/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+```
+
+# Introduction
+
+We here analyze data from an RNASeq experiment (Gabriela Vallejo Flores, Simeng Liu, Hilmar Berger ) performed on organoids (Wnt- for last 3 days) from gastric clones derived from IM and phenotypically normal epithelial biopsies.
+
+We assume that among the 51 clones from 3 patients there should be some with a more IM phenotype and others with a more normal gastric phenotype.
+
+
+```{r}
+load("../../../../Data/Processed/ClonalCultures/RNA/HISAT_featureCount_hg38_gene_expression.Rdata")
+exp_design <- ed
+```
+
+
+# Data overview
+
+## Samples 
+```{r,  results='asis'}
+sel_columns = c("Library.number","Library.Name", "Condition","Patient", "CloneID", "CulturedBy")
+ed_tmp = exp_design[,sel_columns]
+row.names(ed_tmp) <- NULL
+kable(xtable(ed_tmp,display=rep("s", ncol(ed_tmp)+1), align=paste(paste(rep("|", ncol(ed_tmp)+2), collapse="l"),"|",sep=""), type="html", file="" , include.rownames=F))
+```
+
+
+## Gene abundances and counts
+
+```{r}
+boxplot(log10(fpkm_mat+1e-5), ylab="log10(FPKM+1e-5)")
+boxplot(log10(count_mat+1e-5), ylab="log10(Counts+1e-5)")
+
+barplot(apply(count_mat>0, 2, sum), ylab="# detected genes")
+```
+
+## Densities
+
+```{r, densities, fig.width=8, fig.height=8, eval=TRUE}
+par(cex=0.8)
+cp = rainbow(6)
+plotDensities(log2(count_mat+1), legend="topright", group=ed[colnames(count_mat),"ExpID"], col=cp)
+```
+
+## Total mapped read numbers
+
+Pleae note that those counts are based on estimated counts from the combined transcript abundances. There might therefore be small differences to absolute read counts (mapped to transcriptome) per sample. 
+
+```{r, readnum, fig.width=12, fig.height=8, eval=TRUE}
+par(mar=c(5,10,4,2))
+barplot(apply(count_mat,2,sum),las=2, ylab="Log10(Total mapped read number)", main="Total read number")
+apply(count_mat,2,sum)
+```
+
+
+## Sample correlation
+
+```{r, cor_mat, fig.width=12, fig.height=8}
+sample_ordered = rownames(exp_design)
+cor_mat = cor(log10(count_mat+1), method="spearman")
+cor_mat = cor_mat[sample_ordered, sample_ordered]
+# pheatmap(cor_mat, scale="none")
+
+cor_mat2 = cor_mat
+rownames(cor_mat2) = paste(ed[rownames(cor_mat2),]$Patient, ed[rownames(cor_mat2),]$Condition,sep=" - ")
+colnames(cor_mat2) = ed[colnames(cor_mat2),]$sampleID
+pheatmap(cor_mat2,scale="none", cluster_rows=F, cluster_cols=F )
+
+```
+
+## Multi Dimensional Scaling on all genes
+
+```{r, MDS_all, fig.width=8, fig.height=8}
+cp = palette(rainbow(3))
+data_mat_rel = sweep(count_mat,2,apply(count_mat, 2, sum), "/")
+data_inp = t(data_mat_rel) 
+
+d <- dist(data_inp) # euclidean distances between the rows
+fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim
+
+# plot solution
+x <- fit$points[,1]
+y <- fit$points[,2]
+plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n")
+text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$Condition))])
+legend("topleft", legend=c("IM","Non-IM"), fill=cp[c(1,2)])
+
+# IM: all done by GVF, non-IM clones: all done by SML
+# plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n")
+# text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))])
+```
+
+
+
+```{r}
+included_genes = (apply(count_mat,1,max) > 1) # & (substr(rownames(count_mat),1,1)!="_")
+```
+
+## UMAP
+
+```{r}
+coldata <- exp_design[colnames(count_mat),]
+rownames(coldata) <- coldata$sampleID
+ed = exp_design
+#ed$Condition = ifelse(ed$Group == "Control", ifelse(ed$Site=="small intestinal", "SI", "Stomach control"), ed$Group)
+#ed$Condition = factor(ed$Condition, levels=c("Stomach control","Non-IM", "IM","SI"))
+
+dds = DESeqDataSetFromMatrix(count_mat[included_genes, ], colData=coldata, design = ~ Condition)
+norm_counts = as.data.frame(assay(varianceStabilizingTransformation(dds, blind=FALSE)))
+colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+```
+
+
+### Top ~ 1700 genes by mean and MAD
+
+```{r}
+sel_samples = ed$sampleID
+nc_mat_selected = as.matrix(norm_counts[,sel_samples])
+rownames(nc_mat_selected) = norm_counts$GeneSymbol
+
+col_anno = ed[, c("Condition","Patient")]
+
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+means = apply(nc_mat_selected , 1, mean, na.rm=T)
+mads = apply(nc_mat_selected, 1, mad, na.rm=T)
+sel_genes = means > 5 & mads > quantile(mads, 0.95) # this still leaves us with ~1700 genes
+
+input_mat = t(nc_mat_selected[sel_genes,])
+
+set.seed(1243)
+rr = umap(input_mat)
+```
+
+
+```{r, fig.width=8, fig.height=6}
+cond = factor(col_anno[rownames(rr), "Condition"], levels=c("IM", "Non-IM","Normal Antrum", "Colon","Duodenum"))
+pat = factor(col_anno[rownames(rr), "Patient"])
+#site = factor(col_anno[rownames(rr), "Site"])
+site = 20
+
+palette("R3")
+
+plot(rr[, 1], rr[, 2], pch=as.numeric(site), col=as.numeric(cond), ylim=c(min(rr[,2]),max(rr[,2])), xlim=c(min(rr[,1]),max(rr[,1])+2), ylab="Coord 2", xlab="Coord 1") #
+legend("topright", legend=levels(cond), fill=1:length(levels(cond)))
+#legend("bottomright", legend=levels(site), pch=(1:length(levels(site))))
+abline(h=0,v=0, lty=2)
+
+plot(rr[, 1], rr[, 2], pch=as.numeric(site), col=as.numeric(cond), ylim=c(min(rr[,2]),max(rr[,2])), xlim=c(min(rr[,1]),max(rr[,1])+2), ylab="Coord 2", xlab="Coord 1") 
+text(rr[, 1], rr[, 2], labels = ifelse(ed[rownames(rr), "Patient"]=="na", ed[rownames(rr), "Condition"], ed[rownames(rr), "Library.Name"]), adj = c(-0.2,0.5), cex=0.7)
+legend("topleft", legend=levels(cond), fill=1:length(levels(cond)))
+#legend("bottomright", legend=levels(site), pch=(1:length(levels(site))))
+abline(h=0,v=0, lty=2)
+
+
+# plot(rr[, 1], rr[, 2], pch=as.numeric(site), col=part, ylim=c(min(rr[,2]),max(rr[,2])), xlim=c(min(rr[,1]),max(rr[,1])+2), ylab="Coord 2", xlab="Coord 1") #
+# #legend("bottomright", legend=levels(site), pch=(1:length(levels(site))))
+# legend("topright", legend=unique(sort(part)), fill=unique(sort(part)), title="Partition")
+# abline(h=0,v=0, lty=2)
+# 
+
+# rrr = rr[rr[,1]>0.5, ]
+# subset(ed[rownames(rrr),], Site=="Angular incisure" & Group == "IM")
+# rrl = rr[rr[,1]< -0.5, ]
+# subset(ed[rownames(rrl),], Group == "Non-IM")
+```
+
+
+
+### Top ~1200 most variable genes by coefficient of variation
+
+```{r}
+sds <- apply(norm_counts, 1, mad, na.rm=T)
+means <- apply(norm_counts, 1, mean, na.rm=T)
+covs <- sds/means
+sel_genes <- names(covs[covs>0.2])
+sel_samples = ed$sampleID
+nc_mat_selected = as.matrix(norm_counts[sel_genes,sel_samples])
+rownames(nc_mat_selected) = norm_counts[sel_genes,]$GeneSymbol
+
+col_anno = ed[, c("Condition","Patient")]
+
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+input_mat = t(nc_mat_selected)
+
+set.seed(1243)
+rr = umap(input_mat)
+```
+
+
+```{r, fig.width=8, fig.height=6}
+cond = factor(col_anno[rownames(rr), "Condition"], levels=c("IM", "Non-IM","Normal Antrum", "Colon","Duodenum"))
+pat = factor(col_anno[rownames(rr), "Patient"])
+#site = factor(col_anno[rownames(rr), "Site"])
+site = 20
+
+palette("R3")
+
+plot(rr[, 1], rr[, 2], pch=as.numeric(site), col=as.numeric(cond), ylim=c(min(rr[,2]),max(rr[,2])), xlim=c(min(rr[,1]),max(rr[,1])+2), ylab="Coord 2", xlab="Coord 1") #
+legend("bottomright", legend=levels(cond), fill=1:length(levels(cond)))
+#legend("bottomright", legend=levels(site), pch=(1:length(levels(site))))
+abline(h=0,v=0, lty=2)
+
+plot(rr[, 1], rr[, 2], pch=as.numeric(site), col=as.numeric(cond), ylim=c(min(rr[,2]),max(rr[,2])), xlim=c(min(rr[,1]),max(rr[,1])+2), ylab="Coord 2", xlab="Coord 1") 
+text(rr[, 1], rr[, 2], labels = ifelse(ed[rownames(rr), "Patient"]=="na", ed[rownames(rr), "Condition"], ed[rownames(rr), "Library.Name"]), adj = c(-0.2,0.5), cex=0.7)
+legend("bottomright", legend=levels(cond), fill=1:length(levels(cond)))
+#legend("bottomright", legend=levels(site), pch=(1:length(levels(site))))
+abline(h=0,v=0, lty=2)
+```
+
+
+
+
+```{r, fig.width=12, fig.height=5}
+cdx2 = fpkm_mat["ENSG00000165556",]
+names(cdx2) <- ed[names(cdx2), ]$Library.Name
+par(mar=c(12,4,4,1))
+barplot(sort(cdx2), las=2, main="CDX2")
+
+vil1 = fpkm_mat["ENSG00000127831",]
+names(vil1) <- ed[names(vil1), ]$Library.Name
+par(mar=c(12,4,4,1))
+barplot(sort(vil1), las=2, main="VIL1")
+```
+
+
+
+# Differential Expression Analysis
+
+
+We perform the following Comparisons:  
+
+  - IM vs. non-IM in all patients
+  - all IM clones vs. normal stomach antrum
+  - for each patient separately: IM clones vs. normal stomach antrum
+  - for each patient separately: IM clones vs. non-IM clones
+  - for each patient separately: non-IM clones vs. normal stomach antrum
+  - HGAT-26A-1, HGAT-29A-2 vs. all other HGAT samples [NAntr1_vs_NAntr2]
+  - SI vs. HGAT-26A-1, HGAT-29A-2
+  - Colon vs. HGAT-26A-1, HGAT-29A-2
+  
+Since many of the healthy stomach samples (HGAT) show increased scores for intestinal metaplasia and cluster with IM samples/intestine in UMAP, we use only the two best HGAT samples with lowest intestinal scores (HGAT-26A-1, HGAT-29A-2) as healthy stomach control. 
+
+
+```{r}
+coldata <- exp_design[colnames(count_mat),]
+rownames(coldata) <- coldata$sampleID
+ddsHisatGE <- DESeqDataSetFromMatrix(count_mat, colData=coldata, design=~ Condition)
+```
+
+```{r, dge_analysis, warning=FALSE, message=FALSE}
+ed = exp_design
+
+included_genes = (apply(count_mat,1,max) > 1) # & (substr(rownames(count_mat),1,1)!="_")
+
+all_results = list()
+
+normal_controls_patients = unique(subset(ed, Condition=="Normal Antrum")$Patient)
+normal_controls_libs = c("HGAT-26A-1", "HGAT-29A-2") # Libraries of good normal controls
+
+############################################
+# All patients - IM vs. non-IM clones
+############################################
+
+included_samples = rownames(subset(ed, Condition %in% c("IM","Non-IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Non-IM"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
+
+all_results[["IM_vs_non-IM_all_samples"]] = res
+
+
+############################################
+# All IM clones vs. all_normal controls
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("591","592","594", normal_controls_patients) & Condition %in% c("Normal Antrum","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
+
+all_results[["IM_all_vs_NormalAntrum"]] = res
+
+
+############################################
+# All IM clones vs. good_normal controls
+############################################
+
+included_samples = rownames(subset(ed, (Patient %in% c("591","592","594") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
+
+all_results[["IM_all_vs_NormalAntrum"]] = res
+
+
+
+############################################
+# Pat 591 IM vs. non-IM
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("591") & Condition %in% c("Non-IM","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Non-IM"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
+
+all_results[["IM_591_vs_NonIM"]] = res
+
+############################################
+# Pat 592 IM vs. non-IM
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("592") & Condition %in% c("Non-IM","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Non-IM"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
+
+all_results[["IM_592_vs_NonIM"]] = res
+
+
+############################################
+# Pat 594 IM vs. non-IM
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("594") & Condition %in% c("Non-IM","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Non-IM"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
+
+all_results[["IM_594_vs_NonIM"]] = res
+
+
+############################################
+# Pat 591 IM vs. good normal controls
+############################################
+
+included_samples = rownames(subset(ed, (Patient %in% c("591") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
+
+all_results[["IM_591_vs_NormalAntrum"]] = res
+
+############################################
+# Pat 592 IM vs. normal controls
+############################################
+
+normal_controls = c("HGAT-26A", "HGAT-29A")
+
+included_samples = rownames(subset(ed, (Patient %in% c("592") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
+
+all_results[["IM_592_vs_NormalAntrum"]] = res
+
+
+############################################
+# Pat 594 IM vs. normal controls
+############################################
+
+included_samples = rownames(subset(ed, (Patient %in% c("594") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
+
+all_results[["IM_594_vs_NormalAntrum"]] = res
+
+
+############################################
+# Pat 591 non-IM vs. normal controls
+############################################
+
+included_samples = rownames(subset(ed, (Patient %in% c("591") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","Non-IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("Non-IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","Non-IM","Normal Antrum"))
+
+all_results[["NonIM_591_vs_NormalAntrum"]] = res
+
+############################################
+# Pat 592 IM vs. normal controls
+############################################
+
+included_samples = rownames(subset(ed, (Patient %in% c("592") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","Non-IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("Non-IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","Non-IM","Normal Antrum"))
+
+all_results[["NonIM_592_vs_NormalAntrum"]] = res
+
+############################################
+# Pat 594 IM vs. normal controls
+############################################
+
+
+included_samples = rownames(subset(ed, (Patient %in% c("594") | Library.Name %in% normal_controls_libs) & Condition %in% c("Normal Antrum","Non-IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("Non-IM","Normal Antrum"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","Non-IM","Normal Antrum"))
+
+all_results[["Non-IM_594_vs_NormalAntrum"]] = res
+
+
+############################################
+# HGAT controls 26/29 vs. rest
+############################################
+
+
+included_samples = rownames(subset(ed, Condition %in% c("Normal Antrum")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(ifelse(dds_selected$Library.Name %in% c("HGAT-26A-1", "HGAT-29A-2"), "NormalAntrum_1","NormalAntrum_2"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","NormalAntrum_1","NormalAntrum_2"))
+
+all_results[["NAntr1_vs_NAntr2"]] = res
+
+
+############################################
+# Duodenum vs HGAT controls 26/29
+############################################
+
+included_samples = rownames(subset(ed, Library.Name %in% c("HGAT-26A-1", "HGAT-29A-2", "DUODENUM MG")  ))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition)
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","Duodenum","Normal Antrum"))
+
+all_results[["Duod_vs_HealthyAntrum"]] = res
+
+############################################
+# Colon vs HGAT controls 26/29
+############################################
+
+included_samples = rownames(subset(ed, Library.Name %in% c("HGAT-26A-1", "HGAT-29A-2", "COLON MG")  ))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition)
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","Colon","Normal Antrum"))
+
+all_results[["Colon_vs_HealthyAntrum"]] = res
+
+############################################
+# IM 594 vs 591
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("594","591")  & Condition %in% c("IM")) )
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(paste0("P",dds_selected$Patient))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","P594","P591"))
+
+all_results[["IM_P594_vs_P591"]] = res
+
+############################################
+# IM 594 vs 592
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("594","592")  & Condition %in% c("IM")) )
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(paste0("P",dds_selected$Patient))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","P594","P592"))
+
+all_results[["IM_P594_vs_P592"]] = res
+
+
+############################################
+# IM 592 vs 591
+############################################
+
+included_samples = rownames(subset(ed, Patient %in% c("591","592")  & Condition %in% c("IM")) )
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(paste0("P",dds_selected$Patient))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","P592","P591"))
+
+all_results[["IM_P592_vs_P591"]] = res
+
+
+############################################################################################
+
+excluded_genes = names(included_genes[!included_genes])
+cols_in_res_table = colnames(all_results[[1]])
+empty_cols = do.call(cbind, Map(function(x) rep(NA, length(excluded_genes)), cols_in_res_table ))
+excluded_gene_tab = data.frame(row.names = excluded_genes, empty_cols )
+
+for (n in names(all_results)) {
+  tmp = all_results[[n]]
+  resOrdered <- data.frame(tmp[order(tmp$pvalue),])
+  resOrdered = rbind(resOrdered, excluded_gene_tab)
+  resOrdered$padj = ifelse(is.na(resOrdered$padj),1,resOrdered$padj)
+  res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneSymbol","EntrezID","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  #res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  res_annotated = merge(res_annotated, count_mat, by.x="Row.names",by.y=0, all.x=T, sort=F)
+  all_results[[n]] = res_annotated
+}
+
+```
+
+
+### Volcano plots
+
+For each comparison, the distribution of the fold change (on a log2 scale) and adjusted p-value (on reverse logarithmical scale) is shown in a volcano plot. The red line denotes the FDR cutoff of 0.05. 
+
+```{r, DE_volcano, results="hide", fig.width=16,fig.height = 6 }
+all_target_conditions = names(all_results)
+par(mfrow=c(1,3))
+for (tc in all_target_conditions) {
+  r = all_results[[tc]]
+  p <- EnhancedVolcano(toptable = r, lab = r$GeneSymbol, x = "log2FoldChange", y = "padj", title = tc)
+  # plot(r$log2FoldChange, -log10(r$padj),xlab="log2 Fold Change",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$padj),na.rm=T))))
+  # title(main=tc, sub=paste("(",nrow(subset(r, padj < 0.05))," signif. DE genes)",sep="") )
+  # abline(h=-log10(0.05),col="red")
+  print(p)
+}
+```
+
+
+
+```{r, DE_combined}
+all_DE_results_tmp = list()
+for (tc in all_target_conditions) {
+  tmp = all_results[[tc]]
+  tmp$condition = tc
+  all_DE_results_tmp[[tc]] = tmp
+}
+all_DE_results_ts = do.call(rbind, all_DE_results_tmp)
+all_DE_results_ts$DE_class = ifelse(all_DE_results_ts$padj>0.05, "n.s.", ifelse(all_DE_results_ts$log2FoldChange > 0,"Up","Down"))
+#agg_fun = function(x) paste(unique(x),collapse=";")
+agg_fun = function(x) ifelse("Down" %in% x, "Down",ifelse("Up" %in% x, "Up","n.s."))
+all_DE_results_sw = reshape2::dcast(all_DE_results_ts, GeneSymbol ~ condition, value.var="DE_class", fun.aggregate=agg_fun)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+all_output_txt_files = list()
+all_output_excel_files = list()
+# output_file_prefix = paste(result_folder,"Differential_expression_results_", sep="/")
+# #selected_cols = c("Row.names", "GeneSymbol", "GeneDescription","logFC","AveExpr","t","P.Value","adj.P.Val" )
+# selected_cols = colnames(all_results[[1]])
+# for (tc in all_target_conditions) {
+#   filename = paste(output_file_prefix, tc, ".txt", sep="" )
+#   write.table(all_results[[tc]][,selected_cols], file= filename, row.names=F , sep="\t", dec=".", quote=F)
+#   all_output_txt_files[[paste("DGE",tc)]] = filename
+# }
+# 
+
+short_names = list()
+for (i in names(all_results)) {
+  ii = i
+  short_names[[i]] = ii
+}
+
+DGE_Excel_filename = paste(result_folder,"DiffExpression_result_tables.xlsx",sep="/")
+
+sort_and_reduce_tab <- function(x) {
+  x = x[,c("Row.names","baseMean","log2FoldChange","lfcSE","stat","pvalue","padj","GeneSymbol","EntrezID","GeneName")]
+  return(x[order(x$pvalue),])
+}
+
+write_xlsx(lapply(all_results, sort_and_reduce_tab), path=DGE_Excel_filename)
+all_output_excel_files[["DGE results"]] = DGE_Excel_filename
+
+
+filename = paste(result_folder,"DE_results_comparison.txt",sep="/")
+write.table(all_DE_results_sw, file = filename,sep="\t",quote=F, row.names=F)
+all_output_txt_files[["DGE comparison"]] = filename
+
+# output_file_prefix = paste(result_folder,"Differential_expression_results_TS", sep="/")
+# selected_cols = c("Row.names", "GeneSymbol","log2FoldChange","baseMean","pvalue","padj")
+# 
+# # Write TS table for DGE
+# tmp = list()
+# for (tc in all_target_conditions) {
+#   r = all_results[[tc]][,selected_cols]
+#   r$Comparison = tc
+#   tmp[[tc]] = r
+#   
+# }
+# tmp2 = do.call(rbind, tmp)
+# write.table(tmp2, file=paste(output_file_prefix, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+# 
+
+tmp = as.data.frame(assay(varianceStabilizingTransformation(ddsHisatGE, blind=FALSE)))
+#colnames(tmp) = ed[colnames(tmp),]$Sample
+#rownames(tmp) = normalized$genes$ProbeName
+tmp = merge(tmp, gene_anno, by.x=0, by.y="Geneid", all.x=T, sort=F)
+filename = paste(result_folder,"Normalized_expression_data.txt",sep="/")
+write.table(tmp, file=filename,sep="\t",col.names=NA)
+
+all_output_txt_files[["Normalized expression values"]] = filename
+
+```
+
+
+# Result files
+
+The following files have been written:
+```{r, echo=FALSE}
+output_file = paste(result_folder,"DGE_analysis_image.Rdata", sep="/")
+save(all_results, count_mat, fpkm_mat, ed, gene_anno, file=output_file)
+
+all_txt_files = as.data.frame(t(as.data.frame(all_output_txt_files)))
+colnames(all_txt_files)[1] = "File name"
+all_txt_files$Format = "Tab separated text"
+
+all_excel_files = as.data.frame(t(as.data.frame(all_output_excel_files)))
+colnames(all_excel_files)[1] = "File name"
+all_excel_files$Format = "Excel"
+
+all_txt_files
+all_excel_files
+
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

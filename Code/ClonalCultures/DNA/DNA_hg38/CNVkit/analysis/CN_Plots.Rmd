@@ -1,0 +1,278 @@
+---
+title: "CopyNumber MB044 ESGI v2 Clones - CNVkit calls"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(naturalsort)
+suppressMessages(library(GenomicRanges))
+library(GenomicFeatures)
+library(reshape2)
+library(DNAcopy)
+library(RColorBrewer)
+library(ggplot2)
+library(BiocParallel)
+library(data.table)
+```
+
+```{r}
+call_cn_segments_chrom = function(c, data) {
+  c_chrom = paste("chr",c,sep="")  
+  tmp = subset(data, chromosome == c_chrom)
+  if (nrow(tmp)==0) next
+  cna.dat <- CNA(tmp$log2, tmp$chromosome, tmp$start, data.type="logratio")
+  smooth.cna.dat = smooth.CNA(cna.dat)
+  cna.segment = segment(smooth.cna.dat, verbose = F, undo.splits = "prune")
+  return(cna.segment$output)
+}
+  
+call_cn_segments = function(data) {
+  all_chroms = c(as.character(1:22), "X", "Y")
+  #all_chroms = list()
+  #for ( c in c(as.character(1:19), "X", "Y") ) {
+  all_chrom_res = bplapply(as.list(all_chroms), call_cn_segments_chrom, data, BPPARAM = MulticoreParam(24))  
+  #}
+  all_segs = do.call(rbind, all_chrom_res)
+}
+```
+
+
+```{r}
+input_folder = "../results/"
+samples = unlist(sapply(strsplit(list.files(path=input_folder, pattern = "4447_.*.cns", include.dirs = T), "_"), function(x) paste0(x[1:2], collapse="_")))
+
+samples = samples[!samples == "4447_Q"] # this is a mislabeled clone actually belonging to patient 592, not 594
+
+all_CN_res = list()
+all_long_CN_calls = list()
+for(s in samples) {
+  inp_file = paste(s,"_merged_sorted.cnr", sep="")
+  #tmp = read.table(file.path(input_folder, inp_file), sep="\t", header=T, stringsAsFactors = F)
+  print(paste0("Reading ratios for sample ", s))
+  tmp = fread(file.path(input_folder, inp_file), sep="\t", header=T, stringsAsFactors = F)
+  tmp$Index = 1:nrow(tmp)
+  # tt = naturalsort(names(table(tmp$chromosome)))
+  # chrom_sorted = 1:length(tt)
+  # names(chrom_sorted) = tt
+  # tmp$chromorder = chrom_sorted[as.character(tmp$chromosome)]
+  # tmp = tmp[order(tmp$chromorder, tmp$start), ]
+  all_CN_res[[s]] = tmp
+  print(paste0("Reading segments for sample ", s))
+  inp_file2 = paste(s,"_merged_sorted.cns", sep="")
+  col_classes = list(chromosome="character", start="numeric", end="numeric", gene = "character", log2="numeric", depth="numeric", probes="numeric",   weight="numeric")
+  #tmp2 = read.table(file.path(input_folder, inp_file2), sep="\t", header=T, colClasses = list(chromosome="character", start="numeric", end="numeric", gene = "character", log2="numeric", depth="numeric", probes="numeric",   weight="numeric"))
+  tmp2 = fread(file.path(input_folder, inp_file2), sep="\t", header=T, select = c(1:3, 5:8))
+  tmp2$sample = s
+  all_long_CN_calls[[s]] = tmp2
+}
+
+```
+```{r}
+sample_description = as.data.frame(readxl::read_excel("../../../../metadata/DNA_both_batches/SampleDescription.xlsx", sheet=1))
+rownames(sample_description) = sample_description$SampleID
+
+sample_description$label = paste0(sample_description$SampleName, "_", sample_description$CloneID)
+
+```
+
+
+```{r, eval=FALSE, echo=FALSE}
+rerun_segmentation = FALSE
+if(rerun_segmentation) {
+  for(s in samples) {
+    cat(paste0("Running segmentation for sample ", s, "\n"))
+    segs = call_cn_segments(all_CN_res[[s]])
+    segs$sample = s
+    all_long_CN_calls[[s]] = segs
+  }
+  save(all_long_CN_calls, file="Long_CNV_recalled.Rdata")
+} else {
+  load("Long_CNV_recalled.Rdata")
+}
+```
+
+
+# Genome Overview
+
+```{r}
+palette(brewer.pal(8, "Set2"))
+```
+
+
+```{r, fig.width=12, fig.heigth=8}
+samples_ordered = paste0(sample_description[names(all_CN_res),]$SampleName," [",names(all_CN_res),"]")
+for (s in samples) {
+  chr = unique(all_CN_res[[s]]$chromosome)
+  plot(runmed(all_CN_res[[s]]$log2,21), pch=20, ylim=c(-7, 7), ylab="log ratio sample vs. control, running median, k=21", main = paste0(sample_description[s,]$SampleName," [",s,"]", "vs. Control"), col=as.numeric(factor(all_CN_res[[s]]$chromosome)))
+  abline(h=c(-1, 0, 1))
+  legend("topleft", legend=chr, fill=1:length(chr), cex=0.7)
+}
+```
+
+
+
+# All individual chromosomes
+
+
+```{r, fig.width=10, fig.heigth=20}
+for ( c in c(as.character(1:19), "X", "Y") ) {
+  c_chrom = paste("chr",c,sep="")
+  
+  all_sample_tmp = list()
+  all_sample_long_tmp = list()
+  for (s in samples) {
+    tmp = subset(all_CN_res[[s]], chromosome==c_chrom)
+    if (nrow(tmp)==0) next
+    tmp$sampleID = s
+    tmp$sampleName = paste0(sample_description[s,]$SampleName," [",s,"]")
+    tmp$log2_fixed = ifelse(abs(tmp$log2)>4, 4*sign(tmp$log2), tmp$log2)
+    all_sample_tmp[[s]] = tmp
+    tmp2  =subset(all_long_CN_calls[[s]], chromosome==c_chrom)
+    tmp2$sampleName = paste0(sample_description[tmp2$sample,]$SampleName," [",tmp2$sample,"]")
+    tmp2$log2_fixed = ifelse(abs(tmp2$log2)>4, 4*sign(tmp2$log2), tmp2$log2)
+    tmp2$status = factor(ifelse(tmp2$log2 > 0, "gain","loss"), levels=c("gain","loss"))
+    all_sample_long_tmp[[s]] = tmp2
+  }
+  
+  chrom_across_samples_df = do.call(rbind, all_sample_tmp)  
+  cnv_long_across_samples_df = do.call(rbind, all_sample_long_tmp)
+  
+  if(is.null(chrom_across_samples_df)) next
+  if(nrow(cnv_long_across_samples_df) == 0) { next } else {
+    cnv_long_across_samples_df = subset(cnv_long_across_samples_df, abs(log2) > 0.3)
+  }
+  
+  p = ggplot(chrom_across_samples_df, aes(x=start, y=log2_fixed)) +
+    geom_point(size=0.3) + 
+    geom_segment(data=cnv_long_across_samples_df, aes(x=start, xend=end, y=log2_fixed, yend=log2_fixed, col=status), size=1.5) + 
+    facet_grid(sampleName~.) + ggtitle(paste("Chromosome",c)) + theme(strip.text.y = element_text(angle=0)) + scale_color_manual(values=c("gain"="red", "loss"="lightblue"))
+  
+  print(p)
+  }
+```
+
+# CNV Heatmap
+
+## CN ratio heatmap
+
+Here we show genomewide profiles as a heatmap where red colors denote genomic gains and blue colors  hetero- or homozygous genomic losses. Data is ordered top-down by chromosome and genomic position within chromosomes. Please note that small segments might be hard to spot. 
+
+```{r}
+chrom_info = read.table("/data_genome1/References/Human/Sequences/Genome/GRCh38_no_alt_plus_hs38d1_Verily/GCA_000001405.15_GRCh38_no_alt_plus_hs38d1_analysis_set.fna.fai",sep="\t",header=F, stringsAsFactors = F)
+chrom_info = subset(chrom_info, V1 %in% paste0("chr",c(as.character(1:22),"X","Y")))
+chrom_info = chrom_info[naturalorder(chrom_info$V1),]
+
+seq_lengths = chrom_info$V2
+names(seq_lengths) = chrom_info$V1
+#tiles = unlist(tileGenome(seqlengths = seq_lengths, tilewidth = 1e5, cut.last.tile.in.chrom = T))
+tiles = tileGenome(seqlengths = seq_lengths, tilewidth = 1e5, cut.last.tile.in.chrom = T)
+tiles_with_CN_calls = list()
+
+for (n in names(all_long_CN_calls)) {
+  curr_sample = tiles
+  curr_cnv = with(all_long_CN_calls[[n]], GRanges(chromosome, IRanges(start, end), log2ratio=log2))
+  ovlp = findOverlaps(curr_cnv, tiles)
+  curr_sample$Log2Ratio = 0
+  curr_sample$Log2Ratio[subjectHits(ovlp)] = curr_cnv[queryHits(ovlp)]$log2ratio
+  tiles_with_CN_calls[[n]] = curr_sample
+}
+
+
+```
+
+```{r, fig.width=14, fig.height=14}
+RedBlackBlue = c("red","darkred","black","darkblue","blue")
+RedBlackBluePal = colorRampPalette(rev(RedBlackBlue))(100)
+
+tmp_chr = seqnames( tiles_with_CN_calls[[1]] )
+tmp_pos = start(tiles_with_CN_calls[[1]])
+tmp_id = paste(tmp_chr, tmp_pos, sep="_")
+
+row_anno = data.frame(chromosome=tmp_chr, row.names = tmp_id)
+
+cm = do.call(cbind, lapply(tiles_with_CN_calls, function(x) x$Log2Ratio))
+rownames(cm) = tmp_id
+cm = cm[, order(sample_description[colnames(cm), "label" ])]
+
+new_breaks = c(-6,-1.05,seq(-0.5,0.5,1/96),1.05,6)
+pheatmap(cm, cluster_rows = F, cluster_cols = F, scale="none", breaks=new_breaks, color = RedBlackBluePal, annotation_row = row_anno, show_rownames = F, labels_col = sample_description[colnames(cm), "label" ])
+```
+
+
+
+# Genes in regions
+
+```{r}
+hg38_G37_db = loadDb("/data_genome1/References/R_transformed/GENCODEv37_basic_hg38_TxDB.db")
+tx_anno = read.table("/data_genome1/References/Human/Annotations/hg38/Gencode/v37/gencode.v37.transcript.anno.txt", sep="\t", header=T, stringsAsFactors = F)
+rownames(tx_anno) = tx_anno$transcript
+
+all_long_CN_calls_df = do.call(rbind, all_long_CN_calls)
+all_long_CN_calls_df = subset(all_long_CN_calls_df, abs(log2) > 0.3)
+all_long_CN_calls_df$call = ifelse(all_long_CN_calls_df$log2> 0, "gain", "loss")
+rownames(all_long_CN_calls_df) <- NULL
+long_CN_ranges = with(all_long_CN_calls_df, GRanges(chromosome, IRanges(start, end), sample=sample) )
+```
+
+
+
+```{r}
+ovlp = findOverlaps(long_CN_ranges,transcripts(hg38_G37_db), maxgap=1000)
+
+tx_names =transcripts(hg38_G37_db)[subjectHits(ovlp)]$tx_name
+gene_names = tx_anno[tx_names, "GeneSymbol"]
+
+tmp = tapply(gene_names, queryHits(ovlp), function(x) paste(unique(sort(x)), collapse=","))
+
+# missing_query_entries = (1:length(long_CN_ranges))[! as.character((1:length(long_CN_ranges))) %in% names(tmp)]
+# tmp2 = rep("", length(missing_query_entries))
+# names(tmp2) = missing_query_entries
+# tmp = append(tmp, tmp2)
+
+all_long_CN_calls_df$genes = ""
+all_long_CN_calls_df$genes[as.numeric(names(tmp))] = tmp
+
+tmp = tapply(all_long_CN_calls_df[queryHits(ovlp),]$call, list(paste(all_long_CN_calls_df[queryHits(ovlp),]$chromosome,gene_names), all_long_CN_calls_df[queryHits(ovlp),]$sample), function(x) paste(unique(x), collapse=",") )
+
+tmp[is.na(tmp)] <- "nc"
+ss = strsplit(rownames(tmp)," ")
+gene_by_sample_and_state = data.frame(chr = sapply(ss, function(x) x[1]), gene = sapply(ss, function(x) x[2]), tmp)
+gene_by_sample_and_state$chr = factor(gene_by_sample_and_state$chr, levels=naturalsort(unique(gene_by_sample_and_state$chr)))
+gene_by_sample_and_state = gene_by_sample_and_state[order(gene_by_sample_and_state$chr, gene_by_sample_and_state$gene),]
+colnames(gene_by_sample_and_state)  = gsub("X4447_","4447_", colnames(gene_by_sample_and_state))
+```
+
+Genes in affected samples have been stored in the files: 
+
+*Long_CN_calls_all_samples_with_genes.txt*
+
+*Gene_status_by_sample.txt*
+
+```{r}
+write.table(all_long_CN_calls_df, file="Long_CN_calls_all_samples_with_genes.txt", sep="\t", row.names=F, quote=F)
+write.table(gene_by_sample_and_state, file="Gene_status_by_sample.txt", sep="\t", row.names=F, quote=F)
+```
+
+```{r, eval=FALSE, echo=FALSE}
+varcalls = read.table("../../Strelka/called_variants/SnpEff/Colibactin_Strelka_Exome_calls.txt", sep="\t", header=T, stringsAsFactors = F)
+
+cn_state_ts = melt(gene_by_sample_and_state, id.vars = c("chr","gene"))
+colnames(cn_state_ts) = c("chr","gene","sample","CN_state")
+cn_state_ts$sample_fixed = paste("2702", cn_state_ts$sample, sep="_")
+
+varcalls_with_cn = merge(varcalls, cn_state_ts[,c("gene","sample_fixed","CN_state")], by.x=c("Gene", "SAMPLE"), by.y=c("gene","sample_fixed"), all.x=T, sort=F)
+
+write.table(varcalls_with_cn, file="SNP_Indel_calls_with_CN.txt", sep="\t", row.names=F, quote=F)
+```
+

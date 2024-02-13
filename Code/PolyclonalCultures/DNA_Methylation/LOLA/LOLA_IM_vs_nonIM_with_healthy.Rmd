@@ -1,0 +1,185 @@
+---
+title: "Locus Overlap Analysis (LOLA) with core and extended data base on CpG level,IM + Non-IM and healthy stomach samples"
+author: "Kristin Fritsche + Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(ChAMP)
+library(LOLA)
+library(data.table)
+require(reshape2)
+
+source("../../../Utils/LOLA_two_sided.R")
+
+result_folder = paste("../../../../Results/PolyclonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm/"
+#options(mc.cores=12)
+
+```
+
+# Analysis
+
+Here I load the list of differentially methylated CpGs (filtered by |logFC|>0.2 and raw p<0.001) between the comparisons and perform LOLA distinguishing between hyper- and hypomethylated CpGs. All CpGs after will be used as the universe.   
+
+```{r}
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+load(file.path(data_storage_folder, "myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData") )
+
+anno = myNorm_anno_sorted[, c("CHR","MAPINFO")]
+```
+
+
+# Enrichment of DM genes in functional / genomic categories
+
+```{r, warning=F, message=F}
+universe = GRanges(as.character(myNorm_anno_sorted$CHR), IRanges(start = myNorm_anno_sorted$MAPINFO, end = myNorm_anno_sorted$MAPINFO))
+
+all_comparisons = list()
+
+for (nn in names(all_results_betas_annotated)) {
+  tmp = all_results_betas_annotated[[nn]]
+  hyper_cpg = subset(tmp, logFC > 0.2 &  adj.P.Val < 0.05)
+  hypo_cpg = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+  
+  all_comparisons[[paste(nn, "hyper", sep="_")]] = merge(hyper_cpg, anno, by.x="Row.names", by.y=0)
+  all_comparisons[[paste(nn, "hypo", sep="_")]] = merge(hypo_cpg, anno, by.x="Row.names", by.y=0)
+
+}
+
+all_comparisons = all_comparisons[sapply(all_comparisons, function(x) dim(x)[1]) > 0]
+
+GRanges_fun = function(x){
+  GRanges(as.character(x$CHR), IRanges(start = x$MAPINFO, end = x$MAPINFO))
+}
+
+all_comparisons_GRanges = lapply(all_comparisons, GRanges_fun)
+```
+
+
+```{r}
+# taken from Somatic Signatures
+ucsc <- function(x) {
+    suppressMessages(seqlevelsStyle(x) <- "UCSC") ## '<-' needed
+    genome(x) = NA ## avoid mismatches in 'genome' slots for overlaps
+    return(x)
+}
+```
+
+
+## LOLA extended
+
+We here run the LOLA analysis with "Cgs" as the query data set, "universe" as universe and the LOLA extended data base.
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/regions/LOLAExt/hg19"
+regionDB = loadRegionDB(dbPath, useCache = T)
+```
+
+```{r,  warning=TRUE, message=FALSE}
+if(TRUE){
+computeLOLA <- function(x) {
+   runLOLA(ucsc(x), ucsc(universe), regionDB, cores=12)
+}
+
+output_file_prefix = paste(result_folder,"LOLA_Ext_results_", sep="/")
+
+all_results_lola = list()
+for (bb in names(all_comparisons_GRanges)) {
+     xx = all_comparisons_GRanges[[bb]]
+     res = computeLOLA(xx)
+     res$p.adj = p.adjust(10^(-res$pValueLog), method="BH")
+    
+     all_results_lola[[paste(bb,sep="_")]] = res
+
+     write.table(all_results_lola[[bb]], file=paste(output_file_prefix, bb, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+save(all_results_lola, file= file.path(data_storage_folder, "LOLA_Ext_results.Rdata"))
+
+}else{
+  load(file.path(data_storage_folder, "LOLA_Ext_results_.Rdata"))
+}
+```
+
+
+## LOLA core
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/regions/LOLACore/hg19"
+regionDB = loadRegionDB(dbPath, useCache = T)
+```
+
+```{r, warning=TRUE, message=FALSE}
+if(TRUE){
+computeLOLA <- function(x) {
+   runLOLA(ucsc(x), ucsc(universe), regionDB, cores=12)
+}
+
+output_file_prefix = paste(result_folder,"LOLA_Core_results_", sep="/")
+
+all_results_lola = list()
+for (bb in names(all_comparisons_GRanges)) {
+     xx = all_comparisons_GRanges[[bb]]
+     res = computeLOLA(xx)
+     res$p.adj = p.adjust(10^(-res$pValueLog), method="BH")
+    
+     all_results_lola[[paste(bb,sep="_")]] = res
+
+     write.table(all_results_lola[[bb]], file=paste(output_file_prefix, bb, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+save(all_results_lola, file= file.path(data_storage_folder, "LOLA_Core_results.Rdata"))
+
+}else{
+  load(file.path(data_storage_folder, "LOLA_Core_results.Rdata"))
+}
+```
+
+
+## LOLA custom Hpy
+
+We here run the LOLA analysis with "Cgs" as the query data set, "universe" as universe and a custom LOLA data base containing genes DE after Hpy infection.
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/custom/hg19"
+regionDB = loadRegionDB(dbPath, useCache = F)
+```
+
+```{r,  warning=TRUE, message=FALSE}
+if(TRUE){
+computeLOLA <- function(x) {
+   runLOLA(ucsc(x), ucsc(universe), regionDB, cores=12)
+}
+
+output_file_prefix = paste(result_folder,"LOLA_custom_Hpy_results_", sep="/")
+
+all_results_lola = list()
+for (bb in names(all_comparisons_GRanges)) {
+     xx = all_comparisons_GRanges[[bb]]
+     res = computeLOLA(xx)
+     res$p.adj = p.adjust(10^(-res$pValueLog), method="BH")
+    
+     all_results_lola[[paste(bb,sep="_")]] = res
+
+     write.table(all_results_lola[[bb]], file=paste(output_file_prefix, bb, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+save(all_results_lola, file= file.path(data_storage_folder, "LOLA_custom_Hpy_results.Rdata"))
+
+}else{
+  load(file.path(data_storage_folder, "LOLA_custom_Hpy_results_.Rdata"))
+}
+```

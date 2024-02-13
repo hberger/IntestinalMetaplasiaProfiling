@@ -1,0 +1,343 @@
+---
+title: "Stomach Methylation - IM/non-IM vs. corresponding healthy samples, EPIC, classification in uu/um/mm sites in healthy antrum"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+library(ggplot2)
+
+result_folder = paste("../../../../Results/PolyclonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+source("../../../Utils/pheatmap.type.R")
+
+```
+
+
+# Overview
+
+We here use data from healthy antrum Infinium EPIC arrays to classify CpG sites into three classes - biallelically methylated (mm), biallelically unmethylated (uu) and hemimethylated (um) sites. 
+
+```{r, message=FALSE}
+load(file.path(data_storage_folder, "myNorm_IM_nonIM_and_healthy_stomach.RData") )
+
+#ed$SampleLabel <- ifelse(ed$Project=="ZZU", paste0(ed$Sample_Group, "_", ed$PatientID, "_", ed$CloneID), ed$Sample_Name )
+
+ed$Sample_Group2 <- ifelse(ed$Project == "ZZU", paste0("Polyclonal-",ed$Sample_Group), paste0("Healthy-", ed$Stomach_site)) 
+ed$Sample_Group2 <- factor(ed$Sample_Group2, levels=c("Healthy-Antrum","Healthy-Corpus","Healthy-Fundus","Polyclonal-NON_IM","Polyclonal-IM"))
+```
+
+```{r}
+mm = myNorm[, subset(ed, Sample_Group2 == "Healthy-Antrum")$Sample_ID]
+
+row_means <- rowMeans(mm)
+
+hist(row_means, 100, main = "Mean beta in n=6 healthy antrum samples")
+abline(v=c(0.25, 0.75), lty=2, lwd=1, col="red")
+
+cpg_class_u.m <- data.frame(row.names = names(row_means), mean_beta = row_means)
+cpg_class_u.m$u.m_class <- ifelse(cpg_class_u.m$mean_beta < 0.25, "uu", ifelse(cpg_class_u.m$mean_beta>0.75, "mm", "um"))
+```
+
+```{r}
+table(cpg_class_u.m$u.m_class)
+table(cpg_class_u.m$u.m_class) |> prop.table()
+```
+
+# WGS methylation classes
+
+See Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/Antrum_methylation_class_WGS.Rmd for details. 
+[0=uu, 1=um, 2=mm]
+
+```{r}
+cpg_class_wgs <- readRDS(file.path("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/", "WGS_Cpg_Meth_classes_EPIC.rds"))
+```
+
+```{r}
+table(cpg_class_wgs[, "Gastric.antrum"])
+```
+
+
+```{r}
+tmp <- merge(cpg_class_u.m, cpg_class_wgs, by.x=0, by.y=0)
+
+m <- table(tmp$u.m_class, ifelse(tmp$Gastric.antrum==0, "uu", ifelse(tmp$Gastric.antrum==1, "um","mm")), dnn=c("EPIC","WGS"))
+m
+prop.table(m) |> round(digits = 3)
+prop.table(m) |> pheatmap::pheatmap()
+
+table(tmp$u.m_class == ifelse(tmp$Gastric.antrum==0, "uu", ifelse(tmp$Gastric.antrum==1, "um","mm")), dnn="Concordance") |> prop.table()
+
+```
+
+
+
+# IM DM results
+
+See DGE_Result_Overview.html for definitions of hyper/hypomethylated CpG cutoff values.
+
+
+```{r}
+load(file.path(data_storage_folder, "Methylation_DM_lists.Rdata"))
+```
+
+## Hyper-CpGs
+
+```{r}
+sapply(all_hyper_cpg, nrow)
+```
+
+## Hypo-CpGs
+
+```{r}
+sapply(all_hypo_cpg, nrow)
+```
+
+# IM antrum vs. healthy antrum, only new (EPIC) samples - EPIC antrum methylation calls
+
+<!-- ```{r} -->
+<!-- load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_annotated.RData") ) -->
+<!-- im_vs_healthy_results <- all_results_betas_annotated[["IMvsNonIM_592_594_avg"]] -->
+<!-- im_vs_healthy_results$gene_symbol = strsplit(im_vs_healthy_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") ) -->
+<!-- im_vs_healthy_results$Row.names <- as.character(im_vs_healthy_results$Row.names) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- im_vs_healthy_results$dge_class <- with(im_vs_healthy_results, ifelse(P.Value >= 0.001, "ns", ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))) -->
+
+<!-- im_vs_healthy_results = merge(im_vs_healthy_results, cpg_class_u.m, by.x="Row.names", by.y = 0, all.x=T) -->
+
+<!-- ``` -->
+
+
+
+```{r}
+comp = "IM_antrum_vs_healthy_antrum"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_u.m, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+```{r}
+table(im_vs_healthy_results$u.m_class)
+table(im_vs_healthy_results$u.m_class) |> prop.table()
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum"))
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum")) |> prop.table(margin=1)
+```
+
+
+# IM  vs. healthy corresponding sites, only EPIC samples - EPIC antrum methylation calls
+
+```{r}
+comp = "IM_vs_healthy_site_adj"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_u.m, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+
+```{r}
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum"))
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum")) |> prop.table(margin=1)
+```
+
+
+# non-IM vs. healthy corresponding sites, only EPIC samples - EPIC antrum methylation calls
+
+
+```{r}
+comp = "nonIM_vs_healthy_site_adj"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_u.m, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+
+```{r}
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum"))
+table(im_vs_healthy_results$dge_class, im_vs_healthy_results$u.m_class, dnn=c("DGE class","Meth. state in healthy antrum")) |> prop.table(margin=1)
+```
+
+<!-- # IM antrum vs. healthy antrum, only EPIC samples - WGS antrum methylation calls -->
+
+<!-- ```{r} -->
+<!-- comp = "IM_antrum_vs_healthy_antrum" -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]]) -->
+<!-- dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo") -->
+<!-- dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak"))) -->
+
+<!-- im_vs_healthy_results <- merge(cpg_class_wgs, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F) -->
+<!-- im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class) -->
+<!-- im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im) -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Gastric.antrum==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy antrum [WGS]") )  -->
+<!-- m -->
+<!-- m |> prop.table(margin=1) -->
+<!-- ``` -->
+
+
+# IM antrum  vs. healthy antrum, only EPIC samples
+
+## WGS antrum methylation calls
+
+```{r}
+comp = "IM_antrum_vs_healthy_antrum"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_wgs, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Gastric.antrum==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy antrum [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+
+## WGS colon methylation calls
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Colon.Right==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy right colon [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+# IM  vs. healthy corresponding sites
+
+## WGS antrum methylation calls
+
+```{r}
+comp = "IM_vs_healthy_site_adj"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_wgs, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Gastric.antrum==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy antrum [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+
+## WGS colon methylation calls
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Colon.Right==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy right colon [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+#  non-IM vs. healthy corresponding sites
+
+## WGS antrum methylation calls
+
+```{r}
+comp = "nonIM_vs_healthy_site_adj"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+im_vs_healthy_results <- merge(cpg_class_wgs, dm_im, by.x=0, by.y="Row.names", all.x=T, sort=F)
+im_vs_healthy_results$dge_class <- ifelse(is.na(im_vs_healthy_results$dge_class), "ns/nc", im_vs_healthy_results$dge_class)
+im_vs_healthy_results$direction_im <- ifelse(is.na(im_vs_healthy_results$direction_im), "ns/nc", im_vs_healthy_results$direction_im)
+```
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Gastric.antrum==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy antrum [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+
+## WGS colon methylation calls
+
+
+```{r}
+m <- table(im_vs_healthy_results$dge_class, ifelse(im_vs_healthy_results$Colon.Right==0, "uu", ifelse(im_vs_healthy_results$Gastric.antrum==1, "um","mm")), dnn=c("DGE class","Meth. state in healthy right colon [WGS]") ) 
+m
+m |> prop.table(margin=1)
+```
+
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

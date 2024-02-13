@@ -1,0 +1,125 @@
+---
+title: "Comparison DNA methylation results clonal vs. polyclonal"
+output: html_document
+date: "2023-12-14"
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+```
+
+
+```{r}
+polyclonal_env <- new.env()
+load("../../../Data/Processed/PolyclonalCultures/DNAm/all_results_betas_IM_nonIM_with_healthy_annotated.RData", envir = polyclonal_env)
+all_res_beta_pc <- get("all_results_betas_annotated", polyclonal_env)
+clonal_env <- new.env()
+load("../../../Data/Processed/ClonalCultures/DNAm/all_results_betas_IM_nonIM_with_healthy_annotated.RData", envir = clonal_env)
+all_res_beta_cl <- get("all_results_betas_annotated", clonal_env)
+```
+
+```{r}
+res_pc <- all_res_beta_pc[["IMvsNormalAntrum"]]
+res_cl <- all_res_beta_cl[["IMvsNormalAntrum"]]
+```
+
+```{r}
+sel_cols_cl <- c("Row.names","logFC","AveExpr","t","P.Value","adj.P.Val","B")
+sel_cols_pc <- c("Row.names","logFC","AveExpr","t","P.Value","adj.P.Val","B","UCSC_RefGene_Name","UCSC_RefGene_Accession","UCSC_RefGene_Group","Phantom5_Enhancers","DMR","X450k_Enhancer","Regulatory_Feature_Group","GencodeCompV12_NAME","GencodeCompV12_Accession","GencodeCompV12_Group","DNase_Hypersensitivity_NAME","DNase_Hypersensitivity_Evidence_Count","OpenChromatin_NAME","OpenChromatin_Evidence_Count","TFBS_NAME","TFBS_Evidence_Count","Colon_vs_StoAntrum","SI_vs_StoAntrum","Antrum_EPIC","Corpus_EPIC","Colon.Left_WGS","Colon.Right_WGS","Gastric.antrum_WGS","Gastric.body_WGS","Gastric.fundus_WGS","Small.int_WGS")
+res_comb <- merge(res_cl[, sel_cols_cl], res_pc[, sel_cols_pc], by="Row.names", sort=F)
+colnames(res_comb) <- gsub("\\.y", "_polyclonal", gsub("\\.x", "_clonal", colnames(res_comb)) )
+```
+
+```{r, fig.width=5, fig.height=5}
+plot(res_comb$logFC_clonal, res_comb$logFC_polyclonal, pch=20, col=rgb(0,0,0,0.2), main="All probes", xlab="diff beta clonal", ylab="diff beta polyclonal")
+sig_any <- subset(res_comb, adj.P.Val_clonal < 0.05 | adj.P.Val_polyclonal < 0.05)
+with(sig_any, plot(logFC_clonal, logFC_polyclonal, pch=20, col=rgb(0,0,0,0.2), main="Significantly DM probes", xlab="diff beta clonal", ylab="diff beta polyclonal"))
+abline(h=0, v=0, lty=2)
+```
+
+```{r}
+concording_res <- subset(res_comb, (sign(logFC_clonal) * sign(logFC_polyclonal)) > 0 & adj.P.Val_clonal < 0.05 & adj.P.Val_polyclonal < 0.05)
+nrow(concording_res)
+
+table(sign(concording_res$logFC_clonal))
+
+table(concording_res$Colon_vs_StoAntrum, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("Colon_vs_Stomach","IM_vs_Antrum") )
+
+table(concording_res$SI_vs_StoAntrum, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("SI_vs_Stomach","IM_vs_Antrum") )
+
+table(concording_res$Antrum_EPIC, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("U.M class Antrum EPIC","IM_vs_Antrum") )
+```
+
+```{r}
+tf <- read.table("~/Work/References/pyscenic/hs_hgnc_tfs.txt", sep="\t", header=F)
+```
+
+
+```{r}
+candidates_hyper <- subset(concording_res, Antrum_EPIC=="uu" & Colon_vs_StoAntrum =="hyper" & logFC_clonal > 0)
+
+hyper_genes <- strsplit(candidates_hyper$UCSC_RefGene_Name, ";") |> sapply(unique)
+candidates_hyper$gene_symbols <- sapply(hyper_genes, paste, collapse=",")
+candidates_hyper$is_TF <- sapply(hyper_genes, function(x) any(match(tf$V1, x)))
+
+candidates_hypo <- subset(concording_res, Antrum_EPIC=="mm" & Colon_vs_StoAntrum =="hypo" & logFC_clonal < 0)
+hypo_genes <- strsplit(candidates_hypo$UCSC_RefGene_Name, ";") |> sapply(unique)
+candidates_hypo$gene_symbols <- sapply(hypo_genes, paste, collapse=",")
+candidates_hypo$is_TF <- sapply(hypo_genes, function(x) any(match(tf$V1, x)))
+
+
+```
+
+
+# TFs, hyperm.
+
+```{r}
+tf_hyper <- subset(candidates_hyper, is_TF)$gene_symbols |> table() |> sort()
+tf_hyper
+```
+
+
+## TF activitiy overlap from PySCENIC
+
+```{r, fig.height=8}
+load("../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/TF_DE_selected_comparisons.Rdata")
+
+tf_hyper_pyscenic_ovlp <- subset(dge_results_all, GeneSymbol %in% names(tf_hyper))
+
+ggplot(tf_hyper_pyscenic_ovlp) + geom_bar(stat="identity", aes(x=celltype, y=avg_difference)) + facet_wrap(~GeneSymbol, scales = "free_x") +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("hypermethylated genes") + labs(y="PySCENIC TF activity difference")
+```
+
+
+
+# TFs, hypom.
+
+```{r}
+tf_hypo <- subset(candidates_hypo, is_TF)$gene_symbols |> table() |> sort()
+tf_hypo
+```
+
+
+## TF activitiy overlap from PySCENIC
+
+```{r, fig.height=8}
+load("../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/TF_DE_selected_comparisons.Rdata")
+
+tf_hypo_pyscenic_ovlp <- subset(dge_results_all, GeneSymbol %in% names(tf_hypo))
+
+ggplot(tf_hypo_pyscenic_ovlp) + geom_bar(stat="identity", aes(x=celltype, y=avg_difference)) + facet_wrap(~GeneSymbol, scales = "free_x") +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("hypomethylated genes") + labs(y="PySCENIC TF activity difference")
+```
+
+# non-TFs, hyperm.
+
+```{r}
+subset(candidates_hyper, is.na(is_TF))$gene_symbols |> table() |> sort()
+```
+
+# non-TFs, hypom.
+
+```{r}
+subset(candidates_hypo, is.na(is_TF))$gene_symbols |> table() |> sort()
+```

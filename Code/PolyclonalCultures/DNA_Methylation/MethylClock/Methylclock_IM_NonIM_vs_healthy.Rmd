@@ -1,0 +1,119 @@
+---
+title: "Stomach Methylation - Methylclock Analysis, IM/non-IM and healthy samples"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+library(plyr)
+library(writexl)
+
+library(limma)
+library(ggplot2)
+
+library(methylclock)
+
+result_folder = paste("../../../../Results/PolyclonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+```
+
+
+# Experimental Design
+
+Gastric biopsies from patients with intestinal metaplasia were taken from metaplastic and non-metaplastic control sites. Primary gastric epithelial cells were extracted and expanded on feeder cells and as organoids. 
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+# Data Import
+
+Raw intensity values were preprocessed and QC checked (see "Preprocessing_and_QC.Rmd"). Here I load the sample annotation and the normalized (SWAN) beta values:
+
+```{r Data Import, message=FALSE}
+load(file.path(data_storage_folder, "myNorm_IM_nonIM_and_healthy_stomach.RData"))
+
+
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+full_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Other")
+
+full_anno = full_anno[, c("UCSC_RefGene_Name", "UCSC_RefGene_Accession", "UCSC_RefGene_Group", "Phantom5_Enhancers", "DMR", "X450k_Enhancer", "Regulatory_Feature_Group", "GencodeCompV12_NAME", "GencodeCompV12_Accession", "GencodeCompV12_Group", "DNase_Hypersensitivity_NAME", "DNase_Hypersensitivity_Evidence_Count", "OpenChromatin_NAME", "OpenChromatin_Evidence_Count", "TFBS_NAME", "TFBS_Evidence_Count")]
+```
+
+
+```{r}
+cl1 <- checkClocks(myNorm)
+```
+
+```{r}
+cl2 <- checkClocksGA(myNorm)
+```
+
+
+```{r}
+rr <- DNAmAge(myNorm)
+```
+
+
+```{r}
+
+for (mm in colnames(rr)[2:ncol(rr)]) {
+  if(all(is.na(rr[[mm]]))) {
+    cat("Removing method due to missingness: ", mm, "\n")
+    rr[[mm]] <- NULL
+  }
+}
+
+rr_m = as.matrix(rr[, 2:ncol(rr)])
+rownames(rr_m) <- rr$id
+```
+
+```{r}
+cor(rr_m) |> pheatmap(, cluster_cols = F, cluster_rows  = F, main = "Method correlation")
+
+```
+
+```{r, fig.width=12, fig.height=8}
+ed = ed |> as.data.frame()
+
+rr_ts <- reshape2::melt(rr, id.var="id")
+colnames(rr_ts) <- c("id", "Method", "EstimatedAge")
+rr2 <- merge(rr_ts, ed, by.x="id", by.y="Sample_ID", all.x=T, sort=F)
+
+
+ggplot(rr2, aes(x=Age, y=EstimatedAge, col=PatientID, shape = Sample_Group)) + geom_point() + facet_wrap(~Method)
+
+# for (mm in colnames(rr)[2:ncol(rr)]) {
+#   plot(rr2$Age, rr2[, mm], xlab="Real age", ylab=paste0("Estimated age [", mm,"]"), main =mm )
+# }
+
+
+rr2$age_diff <- rr2$EstimatedAge - rr2$Age
+ggplot(rr2, aes(x=Sample_Group, y=age_diff, fill=PatientID)) + geom_bar(stat="identity", position = position_dodge()) + facet_wrap(~Method)
+
+```
+
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
