@@ -1,0 +1,349 @@
+---
+title: "MB044 RNA-Seq analysis for phenotyping of gastric clones, China samples - HISAT2 mapping, featureCount for counting"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(readxl)
+library(xtable)
+library(pheatmap)
+library(reshape2)
+library(knitr)
+library(data.table)
+library(limma)
+library(writexl)
+library(EnhancedVolcano)
+
+result_folder = "../../../../Results/PolyclonalCultures/RNA"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+```
+
+# Introduction
+
+We here analyze data from an RNASeq experiments (Simeng Liu, Mi Yang) performed on organoids (Wnt- for last days) from gastric ex-vivo cultures derived from IM and phenotypically normal epithelial biopsies.
+
+The goal of the analysis is to determine which of the samples shows IM or normal phenotypes in order to select those to be used for subsequent deeper and more comprehensive sequencing studies. 
+
+```{r}
+load("../../../../Data/Processed/PolyclonalCultures/RNA/HISAT_featureCount_hg38_gene_expression.Rdata")
+exp_design <- ed
+```
+
+# Data overview
+
+## Samples 
+```{r,  results='asis'}
+sel_columns = c("sampleID","library ID","Patient", "Group", "Site")
+ed_tmp = exp_design[,sel_columns]
+row.names(ed_tmp) <- NULL
+kable(xtable(ed_tmp,display=rep("s", ncol(ed_tmp)+1), align=paste(paste(rep("|", ncol(ed_tmp)+2), collapse="l"),"|",sep=""), type="html", file="" , include.rownames=F))
+```
+
+
+```{r}
+table(exp_design$Group, exp_design$Site)
+```
+
+
+## Gene abundances and counts
+
+```{r}
+boxplot(log10(fpkm_mat+1e-5), ylab="log10(FPKM+1e-5)")
+boxplot(log10(count_mat+1e-5), ylab="log10(Counts+1e-5)")
+
+barplot(apply(count_mat>0, 2, sum), ylab="# detected genes")
+```
+
+## Densities
+
+```{r, densities, fig.width=8, fig.height=8, eval=TRUE}
+par(cex=0.8)
+cp = rainbow(6)
+plotDensities(log2(count_mat+1), legend="topright", group=ed[colnames(count_mat),"ExpID"], col=cp)
+```
+
+## Total mapped read numbers
+
+Pleae note that those counts are based on estimated counts from the combined transcript abundances. There might therefore be small differences to absolute read counts (mapped to transcriptome) per sample. 
+
+```{r, readnum, fig.width=12, fig.height=8, eval=TRUE}
+par(mar=c(5,10,4,2))
+barplot(apply(count_mat,2,sum),las=2, ylab="Log10(Total mapped read number)", main="Total read number")
+#apply(count_mat,2,sum)
+```
+
+
+## Sample correlation
+
+```{r, cor_mat, fig.width=12, fig.height=8}
+sample_ordered = rownames(exp_design)
+cor_mat = cor(log10(count_mat+1), method="spearman")
+cor_mat = cor_mat[sample_ordered, sample_ordered]
+# pheatmap(cor_mat, scale="none")
+
+cor_mat2 = cor_mat
+rownames(cor_mat2) = paste(ed[rownames(cor_mat2),]$Patient, ed[rownames(cor_mat2),]$Group,sep=" - ")
+colnames(cor_mat2) = ed[colnames(cor_mat2),]$sampleID
+pheatmap(cor_mat2,scale="none", cluster_rows=F, cluster_cols=F )
+
+```
+
+## Multi Dimensional Scaling on all genes
+
+```{r, MDS_all, fig.width=8, fig.height=8}
+cp = palette(rainbow(3))
+data_mat_rel = sweep(count_mat,2,apply(count_mat, 2, sum), "/")
+data_inp = t(data_mat_rel) 
+
+d <- dist(data_inp) # euclidean distances between the rows
+fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim
+
+# plot solution
+x <- fit$points[,1]
+y <- fit$points[,2]
+gg = factor(ed[rownames(data_inp),]$Group)
+plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n")
+text(x,y,labels=ed[rownames(data_inp),]$"Remark", col=cp[as.numeric(gg)])
+legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))])
+
+# IM: all done by GVF, non-IM clones: all done by SML
+# plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n")
+# text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))])
+```
+
+# Differential Expression Analysis
+
+We compare
+
+  - IM vs. Non-IM in paired samples
+  - IM vs. stomach control
+  - Non-IM vs. stomach control
+  - SI vs. stomach controls
+
+
+```{r, dge_analysis, results='hide', warning=FALSE, message=FALSE}
+coldata <- exp_design[colnames(count_mat),]
+rownames(coldata) <- coldata$sampleID
+ed = exp_design
+
+included_genes = (apply(count_mat,1,max) > 1) # & (substr(rownames(count_mat),1,1)!="_")
+
+normal_controls = unique(subset(ed, Group=="Control" & Site != "small intestinal")$Patient)
+antrum_controls = unique(subset(ed, Group=="Control" & Site == "Antrum")$Patient)
+corpus_controls = unique(subset(ed, Group=="Control" & Site == "Corpus")$Patient)
+
+all_results = list()
+
+
+############################################
+# All patients - IM vs. non-IM 
+############################################
+
+included_samples = rownames(subset(ed, Group %in% c("IM","Non-IM")))
+
+dds_selected <- DESeqDataSetFromMatrix(count_mat[included_genes, included_samples], colData=coldata[included_samples, ], design = ~ Patient + Group)
+dds_selected$Group <- factor(dds_selected$Group, levels=c("IM","Non-IM"))
+#dds_selected <- DESeq(dds_selected, fitType="local")
+dds_selected <- DESeq(dds_selected)
+
+res <- results(dds_selected, contrast=c("Group","IM","Non-IM"))
+
+all_results[["IM_vs_non-IM_all"]] = res
+
+
+
+############################################
+# All IM clones vs. normal controls
+############################################
+
+included_samples = rownames(subset(ed, Group %in% c("Control","IM") & Site != "small intestinal"))
+
+dds_selected <- DESeqDataSetFromMatrix(count_mat[included_genes, included_samples], colData=coldata[included_samples, ], design = ~ Group)
+dds_selected$Group <- factor(dds_selected$Group, levels=c("IM","Control"))
+#dds_selected <- DESeq(dds_selected, fitType="local")
+dds_selected <- DESeq(dds_selected)
+
+res <- results(dds_selected, contrast=c("Group","IM","Control"))
+
+all_results[["IM_all_vs_Normal_AC"]] = res
+
+############################################
+# All IM clones vs. normal antrum controls
+############################################
+
+included_samples = rownames(subset(ed, Group == "IM" | (Group == "Control" & Site == "Antrum")) )
+
+dds_selected <- DESeqDataSetFromMatrix(count_mat[included_genes, included_samples], colData=coldata[included_samples, ], design = ~ Group)
+dds_selected$Group <- factor(dds_selected$Group, levels=c("IM","Control"))
+#dds_selected <- DESeq(dds_selected, fitType="local")
+dds_selected <- DESeq(dds_selected)
+
+res <- results(dds_selected, contrast=c("Group","IM","Control"))
+
+all_results[["IM_all_vs_Normal_A"]] = res
+
+############################################
+# SI vs. normal controls
+############################################
+
+included_samples = rownames(subset(ed, Group=="Control"))
+coldata$Site2 = ifelse(coldata$Site=="small intestinal", "SI", "Stomach")
+
+dds_selected <- DESeqDataSetFromMatrix(count_mat[included_genes, included_samples], colData=coldata[included_samples, ], design = ~Site2)
+dds_selected$Group <- factor(dds_selected$Group, levels=c("SI","Stomach"))
+#dds_selected <- DESeq(dds_selected, fitType="local")
+dds_selected <- DESeq(dds_selected)
+
+res <- results(dds_selected, contrast=c("Site2","SI","Stomach"))
+
+all_results[["SI_vs_Normal_AC"]] = res
+
+
+############################################################################################
+
+excluded_genes = names(included_genes[!included_genes])
+cols_in_res_table = colnames(all_results[[1]])
+empty_cols = do.call(cbind, Map(function(x) rep(NA, length(excluded_genes)), cols_in_res_table ))
+excluded_gene_tab = data.frame(row.names = excluded_genes, empty_cols )
+
+tmp_mat = count_mat
+colnames(tmp_mat) = ed[colnames(tmp_mat),"Remark"]
+tmp_mat = tmp_mat[, order(colnames(tmp_mat))]
+
+for (n in names(all_results)) {
+  tmp = all_results[[n]]
+  resOrdered <- data.frame(tmp[order(tmp$pvalue),])
+  resOrdered = rbind(resOrdered, excluded_gene_tab)
+  resOrdered$padj = ifelse(is.na(resOrdered$padj),1,resOrdered$padj)
+  res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneSymbol","EntrezID","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  #res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  res_annotated = merge(res_annotated, tmp_mat, by.x="Row.names",by.y=0, all.x=T, sort=F)
+  all_results[[n]] = res_annotated
+}
+
+
+```
+
+### Volcano plots
+
+For each comparison, the distribution of the fold change (on a log2 scale) and adjusted p-value (on reverse logarithmical scale) is shown in a volcano plot. The red line denotes the FDR cutoff of 0.05. 
+
+```{r, DE_volcano, results="hide", fig.width=16,fig.height = 6 }
+all_target_conditions = names(all_results)
+par(mfrow=c(1,3))
+all_GSA_results = list()
+for (tc in all_target_conditions) {
+  r = all_results[[tc]]
+  p <- EnhancedVolcano(r, lab=r$GeneSymbol, x="log2FoldChange", y = "padj") + ggtitle(tc)
+  # plot(r$log2FoldChange, -log10(r$padj),xlab="log2 Fold Change",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$padj),na.rm=T))))
+  # title(main=tc, sub=paste("(",nrow(subset(r, padj < 0.05))," signif. DE genes)",sep="") )
+  # abline(h=-log10(0.05),col="red")
+  print(p)
+}
+```
+
+
+
+```{r, DE_combined, results="hide"}
+all_DE_results_tmp = list()
+for (tc in all_target_conditions) {
+  tmp = all_results[[tc]]
+  tmp$condition = tc
+  all_DE_results_tmp[[tc]] = tmp
+}
+all_DE_results_ts = do.call(rbind, all_DE_results_tmp)
+all_DE_results_ts$DE_class = ifelse(all_DE_results_ts$padj>0.05, "n.s.", ifelse(all_DE_results_ts$log2FoldChange > 0,"Up","Down"))
+#agg_fun = function(x) paste(unique(x),collapse=";")
+agg_fun = function(x) ifelse("Down" %in% x, "Down",ifelse("Up" %in% x, "Up","n.s."))
+all_DE_results_sw = reshape2::dcast(all_DE_results_ts, GeneSymbol ~ condition, value.var="DE_class", fun.aggregate=agg_fun)
+```
+
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+all_output_txt_files = list()
+all_output_excel_files = list()
+output_file_prefix = paste(result_folder,"Differential_expression_results_", sep="/")
+
+short_names = list()
+for (i in names(all_results)) {
+  ii = i
+  short_names[[i]] = ii
+}
+
+DGE_Excel_filename = paste(result_folder,"DiffExpression_result_tables.xlsx",sep="/")
+writexl::write_xlsx(all_results, path=DGE_Excel_filename)
+all_output_excel_files[["DGE results"]] = DGE_Excel_filename
+
+
+# filename = paste(result_folder,"DE_results_comparison.txt",sep="/")
+# write.table(all_DE_results_sw, file = filename,sep="\t",quote=F, row.names=F)
+# all_output_txt_files[["DGE comparison"]] = filename
+# 
+# output_file_prefix = paste(result_folder,"Differential_expression_results_TS", sep="/")
+# selected_cols = c("Row.names", "GeneSymbol","log2FoldChange","baseMean","pvalue","padj")
+# 
+# # Write TS table for DGE
+# tmp = list()
+# for (tc in all_target_conditions) {
+#   r = all_results[[tc]][,selected_cols]
+#   r$Comparison = tc
+#   tmp[[tc]] = r
+#   
+# }
+# tmp2 = do.call(rbind, tmp)
+# write.table(tmp2, file=paste(output_file_prefix, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+
+dds = DESeqDataSetFromMatrix(count_mat[included_genes, ], colData=coldata, design = ~ Group)
+tmp = as.data.frame(assay(varianceStabilizingTransformation(dds, blind=FALSE)))
+#colnames(tmp) = ed[colnames(tmp),]$Sample
+#rownames(tmp) = normalized$genes$ProbeName
+tmp = merge(tmp, gene_anno, by.x=0, by.y="Geneid", all.x=T, sort=F)
+filename = paste(result_folder,"Normalized_expression_data.txt",sep="/")
+write.table(tmp, file=filename,sep="\t",col.names=NA)
+
+all_output_txt_files[["Normalized expression values"]] = filename
+
+```
+
+
+# Result files
+
+The following files have been written:
+```{r, echo=FALSE}
+output_file = paste(result_folder,"DGE_analysis_image.Rdata", sep="/")
+save(all_results, count_mat, fpkm_mat, ed, gene_anno, file=output_file)
+
+all_txt_files = as.data.frame(t(as.data.frame(all_output_txt_files)))
+colnames(all_txt_files)[1] = "File name"
+all_txt_files$Format = "Tab separated text"
+
+all_excel_files = as.data.frame(t(as.data.frame(all_output_excel_files)))
+colnames(all_excel_files)[1] = "File name"
+all_excel_files$Format = "Excel"
+
+all_txt_files
+all_excel_files
+
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+
