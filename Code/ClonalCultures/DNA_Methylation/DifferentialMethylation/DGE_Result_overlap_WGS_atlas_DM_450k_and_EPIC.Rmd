@@ -40,6 +40,7 @@ gc()
 cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=pos), ID=rownames(cpg_pos_epic)) )
 ```
 
+
 # WGS atlas data
 
   - DM sites between Colon and Antrum or SI and Antrum
@@ -47,9 +48,16 @@ cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=po
 ```{r}
 all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/ClonalCultures/DNAm/WGS_gut_DM.rds")
 
-wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
-  x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
-  x$direction <- ifelse(x$logFC > 0.2, "hyper", "hypo")
+# wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
+#   x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
+#   x$direction <- ifelse(x$logFC > 0.2, "hyper", "hypo")
+#   return(x)
+# })
+
+wgs_all_ilmn <- lapply(all_results_beta_annotated_wgs, function(x) {
+  x <- subset(x, !is.na(ilmn_id))
+  x$dge_class <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(x$logFC > 0, ifelse(x$logFC > 0.2, "hyper", "hyper_weak"), ifelse(x$logFC < -0.2, "hypo", "hypo_weak")))
+  x$direction <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(abs(x$logFC) < 0.2, "nc/weak", ifelse(x$logFC > 0.2, "hyper", "hypo")))
   return(x)
 })
 ```
@@ -85,21 +93,19 @@ all_hyper_cpg[[n]] <- hyper_cpg_592_594
 all_hypo_cpg[[n]] <- hypo_cpg_592_594
 ```
 
-We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+We identified `r length(hyper_cpg_592_594)` hypermethylated and `r length(hypo_cpg_592_594)` hypomethylated genes. 
 
 
-#### Overlap with WGS atlas gut DM sites
+## Overlap with WGS atlas gut DM sites
 
+### CpGs DM in IM vs. healthy
 
 ```{r}
 all_ovlp_hyper <- list()
 all_ovlp_hypo <- list()
 
-ovlp_res_hyper <- list()
-ovlp_res_hypo <- list()
-
-for (n in names(wgs_sig)) {
-  tmp <- wgs_sig[[n]]
+for (n in names(wgs_all_ilmn)) {
+  tmp <- wgs_all_ilmn[[n]]
   tmp$comparison_wgs <- n
   all_ovlp_hyper[[n]] <- merge(hyper_cpg_592_594, tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
   all_ovlp_hypo[[n]] <- merge(hypo_cpg_592_594, tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
@@ -111,6 +117,46 @@ all_ovlp_hypo_df <- do.call(rbind, all_ovlp_hypo)
 
 
 ```{r}
-table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$direction, useNA = "always", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
-table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$direction, useNA = "always", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+```
+
+
+```{r}
+table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$dge_class, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$dge_class, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+```
+
+### CpGs DM in WGS colon/SI vs. stomach
+
+```{r}
+dm_im <- rbind(hyper_cpg_592_594, hypo_cpg_592_594)
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+```
+
+
+```{r}
+all_ovlp_wgs <- list()
+
+for (n in names(wgs_all_ilmn)) {
+  tmp <- wgs_all_ilmn[[n]]
+  tmp$comparison_wgs <- n
+  all_ovlp_wgs[[n]] <- merge(dm_im, tmp, by.x="Row.names", by.y="ilmn_id", all.y=T, sort=F)
+  all_ovlp_wgs[[n]]$direction_im <- ifelse(is.na(all_ovlp_wgs[[n]]$direction_im), "ns",all_ovlp_wgs[[n]]$direction_im)
+}
+
+```
+
+
+```{r, fig.width=8, fig.height=4}
+for (n in names(all_ovlp_wgs)) {
+  m <- with(all_ovlp_wgs[[n]], table(direction_im, dge_class, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
+  print(m)
+  prop.table(m, margin=1) |> pheatmap::pheatmap(cluster_cols=F, cluster_rows=F, main=paste0("DM IM vs. healthy (rows) vs. WGS ", n, " (cols)")) |> print()
+  prop.table(m, margin=2) |> round(digits = 3) |> print()
+}
+
+# 
+# table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+# table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
 ```

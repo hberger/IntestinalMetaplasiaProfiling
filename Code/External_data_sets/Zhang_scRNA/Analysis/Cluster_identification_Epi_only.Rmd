@@ -1,0 +1,379 @@
+---
+title: "Cluster identification, Zhang et al Stomach / IM, only epithelial cells"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, message=FALSE}
+rm(list=ls())
+library(Seurat)
+library(ggplot2)
+
+library(readxl)
+library(writexl)
+library(knitr)
+library(data.table)
+library(cowplot)
+
+library(pheatmap)
+
+library(future)
+options("future.globals.maxSize"=2**33)
+plan("multicore", workers = 4)
+
+result_folder = "../../../../Results/Zhang_scRNA/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/ExtData/Zhang_scRNA"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+rerun_dge_analyses = T
+```
+
+```{r}
+data_file_epi = file.path(data_storage_folder, "Zhang_epi_only.Rdata")
+reprocess_data = F
+if(reprocess_data) {
+  load(file.path(data_storage_folder, "Zhang_all_cells_CCA.RData"))
+  meta <- readRDS(file.path(data_storage_folder, "Zhang_all_cells_CCA_metadata.rds"))
+  scData.combined@meta.data <- meta[Cells(scData.combined), ]
+  old = scData.combined
+  
+  all_clusters = unique(old$cluster_label)
+  selected_clusters = all_clusters[grepl("Metaplastic|G-cell|Gland base|Goblet|Pit cell|EEC", all_clusters)]
+  selected_samples = unique(old$label)
+  selected_samples = selected_samples[grepl("Non-atrophic|Chronic|Mild|Severe", selected_samples)] # exclude cancer sample
+  set.seed(20230808)
+  scData.combined = subset(old, cluster_label %in% selected_clusters & label %in% selected_samples)
+  rm(old)
+  tmp = DietSeurat(scData.combined)
+  gc()
+  DefaultAssay(scData.combined) <- "integrated"
+  set.seed(1234)
+  cData.combined <- ScaleData(scData.combined, verbose = TRUE, vars.to.regress = c("percent_mito"))
+  gc()
+  scData.combined <- FindVariableFeatures(scData.combined, selection.method = "vst", nfeatures = 2000)
+  scData.combined <- RunPCA(scData.combined, npcs = 30, verbose = TRUE)
+  #gc()
+  scData.combined <- RunUMAP(scData.combined, reduction = "pca", dims = 1:15)
+  scData.combined <- FindNeighbors(scData.combined, reduction = "pca", dims = 1:15)
+  scData.combined <- FindClusters(scData.combined, resolution = 0.3)
+  gc()
+  save(scData.combined, file=data_file_epi, compress=T)
+  
+} else {
+  load(data_file_epi)
+}
+```
+
+# Cluster overview
+
+```{r, fig.width=14, fig.height=8}
+DimPlot(scData.combined, reduction = "umap", label = TRUE)
+```
+
+```{r, fig.width=14}
+DimPlot(scData.combined, reduction = "umap", group.by = "batch")
+
+p1 <- DimPlot(scData.combined, reduction = "umap", group.by = "condition")
+p2 <- DimPlot(scData.combined, reduction = "umap", label = TRUE)
+plot_grid(p1, p2)
+
+DimPlot(scData.combined, reduction = "umap", split.by = "condition", label = T)
+```
+
+```{r}
+m = table(scData.combined$cluster_label, scData.combined$seurat_clusters)
+pheatmap(m, cluster_cols = F)
+
+m = table(scData.combined$label, scData.combined$seurat_clusters)
+pheatmap(m, cluster_cols = F)
+```
+
+
+
+```{r, fig.height=8}
+mm = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+
+mr = sweep(mm, 2, apply(mm, 2, sum), "/")
+
+pheatmap(mr, cluster_cols=T, cluster_rows=F, main = "Proportion of cells in condition falling in clusters")
+
+mr2 = sweep(mm, 1, apply(mm, 1, sum), "/")
+
+pheatmap(mr2, cluster_cols=T, cluster_rows=F, main = "Proportion of cells in condition falling in Samples")
+```
+
+# Final cluster assigment
+
+```{r}
+cluster_assignment = read.table(file.path(data_storage_folder, "Cluster_assignments/Cluster_assignments_Epi_2024-02-23.txt"), sep="\t",header=T, stringsAsFactors = F)
+options(width = 180)
+print(cluster_assignment)
+rownames(cluster_assignment) = as.character(cluster_assignment$ClusterID)
+
+cluster_assignment$Label = factor(cluster_assignment$Label, levels=sort(unique(cluster_assignment$Label)))
+
+scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Label"], col.name = "cluster_label")
+scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Type"], col.name = "cluster_type")
+```
+
+```{r, fig.width=14, fig.height=8}
+scData.combined = SetIdent(scData.combined, value="cluster_label" )
+DimPlot(scData.combined, reduction = "umap", label = TRUE)
+```
+
+```{r}
+m = table(scData.combined$cluster_label, scData.combined$condition)
+m
+```
+
+```{r, fig.width=10,fig.height=7}
+mm  = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+
+mm_r = sweep(mm, 2, apply(mm,2,sum), "/")
+
+pheatmap(mm_r, cluster_cols = F, cluster_rows=F)
+```
+
+
+```{r}
+save(scData.combined,file=file.path(data_storage_folder, "Zhang_IM_Epi_only_cluster_annotated.RData"), compress=T)
+```
+
+```{r}
+scData.combined$condition = factor(scData.combined$condition, levels = c("Non-atrophic gastritis", "Chronic atrophic gastritis", "Mild intestinal metaplasia","Severe intestinal metaplasia") ) 
+```
+
+# Cluster markers
+
+```{r}
+if(rerun_dge_analyses) {
+  Stomach_markers <- FindAllMarkers(object = scData.combined, only.pos = FALSE)
+  save(Stomach_markers, file=file.path(data_storage_folder, "All_markers_Zhang_Epi.Rdata"))
+  write_xlsx(Stomach_markers,file.path(result_folder, "All_markers_Zhang_Epi.xlsx"))
+} else {
+  load(file.path(data_storage_folder, "All_markers_Zhang_Epi.Rdata"))
+}
+cluster_markers = Stomach_markers
+```
+
+
+```{r}
+plot_top_genes <- function(data, dge_results_all, title) {
+  for (n in sort(unique(dge_results_all$cluster))) {
+    tmp = subset(dge_results_all, cluster==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_log2FC > 0)
+    if(nrow(tmp_up)<1) next
+    tmp_up$direction = "up"
+    #tmp_down = subset(tmp, avg_log2FC < 0)
+    #tmp_down$direction = "down"
+    
+    #final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = head(tmp_up, 10)
+    final_top_genes = final_top_genes[order(final_top_genes$avg_log2FC),]
+    final_top_genes$gene = factor(final_top_genes$gene, levels = final_top_genes$gene)
+    p = ggplot(final_top_genes, aes(y=avg_log2FC, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=12) )
+    print(p)
+    
+  }
+}
+```
+
+
+
+## Percent expression of top markers across clusters
+
+```{r, fig.width=16, fig.height=14}
+top_5_markers = unique(unlist(tapply(cluster_markers$gene, cluster_markers$cluster, head, 5)))
+DotPlot(scData.combined, features = top_5_markers , dot.scale = 4, cols = c("red", "blue"), assay = "RNA") +    RotatedAxis()
+```
+
+## Log2 Fold Changes of top 10 DE genes from each cluster
+
+```{r, fig.width=10, fig.height=4}
+plot_top_genes(scData.combined, cluster_markers, "Cluster markers")
+```
+
+
+```{r}
+
+plot_genes <- function(dataset, genes, split.by=NULL) {
+
+  all_genes =rownames(dataset@assays$RNA)
+
+  for (g in sel_markers) {
+    if (!g %in% all_genes) {
+      print(paste0("Gene ",g," has no data (possibly filtered out)."))
+      next
+    } else {
+        p1  =FeaturePlot(object = dataset, features = g, reduction="umap", split.by=split.by, label=T)
+        p2 = VlnPlot(dataset, features = g, ncol = 1, pt.size = 0.01, split.by = split.by) #+ NoLegend()
+        if (is.null(split.by)) {
+          print(plot_grid(p1,p2, ncol=2,align="h"))
+        } else {
+          print(plot_grid(p1,p2, ncol=1,align="v"))
+        }
+
+    }
+  }
+}
+```
+
+
+# Marker exploration
+
+## Selection markers and markers of epithelial and contaminating cells
+
+These are markers used in the cell sorting to select cells for scRNA analysis. Cells were sorted as Lgr5+ eGFP cells from Lgr5-EGFP-IRES-CreER(T2) mice. Since eGFP will be expresed in the offspring of cells positive for Lgr5 at the time of Cre induction, we would expect mainly epithelial cells to be selected.
+
+We here also include markers that should be negative (Cd45 (Ptprc), Cd34, Vim, Myh11) but might be positive in contaminating cells.
+
+
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=c("LGR5","AXIN2","EPCAM","PTPRC","CD34","VIM", "MYH11", "ASCL2")
+DefaultAssay(scData.combined) <- "RNA"
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+
+## Epithelial subgroup markers
+
+Cd44, Sox2, Lgr5 - Lgr5+ signature  
+Muc6 - gland base cells  
+Gast, Ghrl, Chga - G-cells  
+Dclk1 - Tuft cells  
+LIPF - Chief cells  
+Pgc, Gif  - Chief cells
+Tff1 (stomach surface), Tff2 - pan stomach epithelial cell markers  
+Tff3 - intestinal (goblet cell) marker  
+FABP1 - intestinal differentiated cells  
+ATP4A,ATP4B - Parietal  
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=c("CD44","SOX2","LGR5","MUC6","MUC5AC","GKN1","GKN2","GAST","GHRL","CHGA","PGC","GIF","MUC2", "DCLK1", "TFF1","TFF2","TFF3","FABP1", "LIPF", "ATP4A","ATP4B","KRT19")
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA") + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+## Intestinal markers
+
+
+```{r, fig.width=14, fig.height=6}
+
+sel_markers=c("VIL1","TFF3","SPINK4","MUC2" )
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+## Intestinal TF
+
+
+```{r, fig.width=14, fig.height=6}
+sel_markers = c("CDX2","HNF4A","CDX1","ISX")
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+#plot_genes(scData.combined, sel_markers, split.by="condition")
+```
+
+## BMP signaling
+
+```{r, fig.width=12, fig.height=6}
+sel_markers = c("BMP2","BMP1RA","GREM1")
+#plot_genes(scData.combined, sel_markers, split.by = "condition")
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+
+
+## Defence markers
+
+```{r, fig.width=14, fig.height=10}
+sel_markers=c("OLFM4", "ITLN1","REG3G", "DMBT1", "CD74", "SPDEF")
+DefaultAssay(scData.combined) <- "RNA"
+
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+#plot_genes(scData.combined, sel_markers, split.by="condition")
+```
+
+# STAT3 signaling
+
+```{r, fig.width=14, fig.height=10}
+sel_markers=c("STAT3","SOCS3", "SOCS2")
+DefaultAssay(scData.combined) <- "RNA"
+
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+#plot_genes(scData.combined, sel_markers, split.by="condition")
+```
+
+
+## Proliferation markers
+
+
+```{r, fig.width=14, fig.height=3}
+
+sel_markers=c("TOP2A","MKI67" )
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+## Scores and RNA count per cluster
+
+```{r, fig.width=10, fig.height=6}
+VlnPlot(scData.combined, features = "percent_mito", ncol = 1, pt.size = 0.01)
+VlnPlot(scData.combined, features = "apoptosis_score", ncol = 1, pt.size = 0.01)
+VlnPlot(scData.combined, features = "nCount_RNA", ncol = 1, pt.size = 0.01)
+VlnPlot(scData.combined, features = "nFeature_RNA", ncol = 1, pt.size = 0.01)
+```
+
+```{r}
+FeaturePlot(object = scData.combined,  features = "nFeature_RNA", reduction="umap", label=T)
+```
+
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

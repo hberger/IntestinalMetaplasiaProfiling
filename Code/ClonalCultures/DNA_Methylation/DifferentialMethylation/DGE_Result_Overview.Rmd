@@ -21,7 +21,7 @@ library(VennDiagram)
 futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
 library(grid)
 
-result_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
 ```
 
 
@@ -38,7 +38,7 @@ all_hypo_cpg <- list()
 # IM vs. Non-IM, only new (EPIC) samples
 
 ```{r}
-load(file.path(result_folder, "all_results_betas_IM_nonIM_annotated.RData") )
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_annotated.RData") )
 im_nonim_results <- all_results_betas_annotated[["IMvsNonIM_592_594_avg"]]
 im_nonim_results$gene_symbol = strsplit(im_nonim_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
 
@@ -66,7 +66,7 @@ all_hypo_cpg[[n]] <- hypo_cpg_592_594
 We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
 
 
-# Most frequently hypermethylated genes (Top 50)
+## Most frequently hypermethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
@@ -74,7 +74,7 @@ with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene
 ```
 
 
-# Most frequently hypomethylated genes (Top 50)
+## Most frequently hypomethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
@@ -86,7 +86,7 @@ with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_
 
 
 ```{r}
-load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
 im_nonim_healthy_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
 im_nonim_healthy_results$gene_symbol = strsplit(im_nonim_healthy_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
 ```
@@ -109,7 +109,7 @@ all_hypo_cpg[[n]] <- hypo_cpg_592_594
 
 We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
 
-# Most frequently hypermethylated genes (Top 50)
+## Most frequently hypermethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
@@ -117,7 +117,7 @@ with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene
 ```
 
 
-# Most frequently hypomethylated genes (Top 50)
+## Most frequently hypomethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
@@ -128,7 +128,7 @@ with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_
 
 
 ```{r}
-load(file.path(result_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
 im_nonim_healthy_450k_EPIC_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
 im_nonim_healthy_450k_EPIC_results$gene_symbol = strsplit(im_nonim_healthy_450k_EPIC_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
 ```
@@ -151,7 +151,7 @@ all_hypo_cpg[[n]] <- hypo_cpg_592_594
 
 We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
 
-# Most frequently hypermethylated genes (Top 50)
+## Most frequently hypermethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
@@ -159,11 +159,20 @@ with(subset(hyper_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene
 ```
 
 
-# Most frequently hypomethylated genes (Top 50)
+## Most frequently hypomethylated genes (Top 50)
 
 ```{r, fig.width=5, fig.height=5}
 par(mar=c(5,10,4,1))
 with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
+
+# Export
+
+Gene/Cpg lists defined above are save to file *Methylation_DM_lists.Rdata*.
+
+```{r}
+save(all_hyper_cpg, all_hypo_cpg, file=file.path(data_storage_folder, "Methylation_DM_lists.Rdata"), compress=T)
 ```
 
 # Overlaps

@@ -38,7 +38,7 @@ library(ggvenn)
 
 ```{r}
 load(file.path(result_folder, "DGE_analysis_image.Rdata"))
-norm_counts = read.table(file.path(result.folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
+norm_counts = read.table(file.path(result_folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
 colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
 ```
 
@@ -50,9 +50,9 @@ colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
 
 
 ```{r}
-tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
-
-tmp = subset(tmp, p_val_adj < 0.05 & avg_log2FC > 0.5)
+#tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+load("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.Rdata")
+tmp = subset(cluster_markers, p_val_adj < 0.05 & avg_log2FC > 0.5)
 
 sc_sets = split(tmp$gene, tmp$cluster)
 

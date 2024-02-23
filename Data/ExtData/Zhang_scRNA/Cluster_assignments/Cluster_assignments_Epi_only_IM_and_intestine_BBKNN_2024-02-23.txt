@@ -1,0 +1,17 @@
+ClusterID	Type	Label	Markers
+0	Epi	TA/Colonocyte a	MjV, Gut
+1	Epi	Pit cells a	MjV, Stomach
+2	Epi	Enterocyte proximal	MjV, Gut, Stomach
+3	Epi	Intestinal stem cell	MjV, Gut, Stomach
+4	Epi	Pit cells b	MjV, Stomach
+5	Epi	TA/Colonocyte 1	MjV, Gut
+6	Epi	Sto gland base	MjV, Stomach
+7	Epi	Enterocyte DD	MjV, Stomach
+8	Epi	Pit cells c	MjV, Stomach
+9	Epi	Colonocyte	MjV, Gut
+10	Epi	BEST4+ epithelial	MjV, Gut
+11	Epi	Paneth	MjV, Gut
+12	Epi	Enteroendocrine	MjV, Gut, Stomach
+13	Epi	Goblet cell	MjV, Gut, Stomach
+14	Epi	TA/Colonocyte 2	MjV, Gut
+15	Epi	Tuft	MjV, Gut

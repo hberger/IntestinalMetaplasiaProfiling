@@ -149,3 +149,39 @@ save(all_results_lola, file= file.path(data_storage_folder, "LOLA_Core_results_I
   load(file.path(data_storage_folder, "LOLA_Core_results_IM_vs_nonIM_with_healthy_450k_EPIC.Rdata"))
 }
 ```
+
+
+## LOLA custom Hpy
+
+We here run the LOLA analysis with "Cgs" as the query data set, "universe" as universe and a custom LOLA data base containing genes DE after Hpy infection.
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/custom/hg19"
+regionDB = loadRegionDB(dbPath, useCache = F)
+```
+
+```{r,  warning=TRUE, message=FALSE}
+if(TRUE){
+computeLOLA <- function(x) {
+   runLOLA(ucsc(x), ucsc(universe), regionDB, cores=12)
+}
+
+output_file_prefix = paste(result_folder,"LOLA_custom_Hpy_results_IM_vs_nonIM_with_healthy_450k_EPIC", sep="/")
+
+all_results_lola = list()
+for (bb in names(all_comparisons_GRanges)) {
+     xx = all_comparisons_GRanges[[bb]]
+     res = computeLOLA(xx)
+     res$p.adj = p.adjust(10^(-res$pValueLog), method="BH")
+    
+     all_results_lola[[paste(bb,sep="_")]] = res
+
+     write.table(all_results_lola[[bb]], file=paste(output_file_prefix, bb, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+save(all_results_lola, file= file.path(data_storage_folder, "LOLA_custom_Hpy_results_IM_vs_nonIM_with_healthy_450k_EPIC.Rdata"))
+
+}else{
+  load(file.path(data_storage_folder, "LOLA_custom_Hpy_results_IM_vs_nonIM_with_healthy_450k_EPIC.Rdata"))
+}
+```

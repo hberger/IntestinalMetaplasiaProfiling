@@ -38,6 +38,7 @@ if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
 load(file.path(result_folder, "DGE_analysis_image.Rdata"))
 norm_counts = read.table(file.path(result_folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
 colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+ed$Condition <- ifelse(grepl("^SI", ed$Patient), "SI", ifelse(grepl("^HGAT", ed$Patient), "Normal stomach", ed$Group))
 ```
 
 ```{r}
@@ -47,11 +48,21 @@ rownames(ed) <- ed$sampleID
 ```
 
 
+```{r}
+ed_with_selection <- read_excel("../../../../Data/Metadata/PolyclonalCultures/SampleDescription.xlsx", sheet=1)
+ed$Remark_fixed <- gsub("-", "", gsub("SI", "SI ", gsub("NONIM", "NON IM", gsub(" ", "", ed$Remark))))
+ed <- merge(ed, ed_with_selection[, c("MethylationPatID","Methylation_ID2","DNA_ID","Remark")], by.x="Remark_fixed", by.y="Remark", all.x=T)
+rownames(ed) <- ed$sampleID
+```
+
 
 ```{r}
-tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+#scRNA_markers = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+load("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.Rdata")
+scRNA_markers = cluster_markers
+tmp = subset(cluster_markers, p_val_adj < 0.05 & avg_log2FC > 0.5)
 
-tmp = subset(tmp, p_val_adj < 0.05 & avg_log2FC > 0.5)
+#tmp = subset(scRNA_markers, p_val_adj < 0.05 & avg_log2FC > 0.5)
 
 sc_sets = split(tmp$gene, tmp$cluster)
 
@@ -90,7 +101,19 @@ lapply(all_ovlp[grep("Enterocyte a \\(prox\\)|Colonocyte", names(all_ovlp))], so
 ```
 
 
-# GSVA
+# GSVA with all samples
+
+We include markers genes with padj < 0.05 and log2FC > 0.8.
+
+```{r}
+tmp = subset(scRNA_markers, p_val_adj < 0.05 & avg_log2FC > 0.8)
+
+sc_sets = split(tmp$gene, tmp$cluster)
+
+lapply(sc_sets, length) |> unlist()
+
+```
+
 
 ```{r}
 #input_mat = as.matrix(norm_counts[,grepl("SRR13", colnames(norm_counts))])
@@ -118,10 +141,33 @@ res_gsva_s2 <- res_gsva[, order(ed[colnames(res_gsva), "Colon"])]
 pheatmap(res_gsva_s2, annotation_col = col_anno, labels_col = ed[colnames(res_gsva_s2), "Remark"], annotation_colors = anno_cols, cluster_cols=F)
 
 
-pheatmap(res_gsva[c("Enterocyte c","metaplastic stomach","Enterocyte a (prox)","Colonocyte"),], annotation_col = col_anno, labels_col = ed[colnames(res_gsva), "Remark"], annotation_colors = anno_cols)
+# pheatmap(res_gsva[c("Enterocyte c","metaplastic stomach","Enterocyte a (prox)","Colonocyte"),], annotation_col = col_anno, labels_col = ed[colnames(res_gsva), "Remark"], annotation_colors = anno_cols)
 
 ```
 
+
+```{r, fig.width=12, fig.height=4}
+p1 <- ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Bulk Colon vs. Stomach score")
+
+p2 <- ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Colon)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Bulk Colon score")
+
+p3 <- ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Stomach)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Bulk Stomach score")
+
+cowplot::plot_grid(p1,p2,p3, nrow = 1)
+
+```
 
 ```{r, fig.width=12, fig.height=8, warning=FALSE}
 rr_ts <- reshape2::melt(res_gsva)
@@ -147,6 +193,111 @@ ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) +
   geom_violin(aes(fill=Condition)) + 
   stat_summary(fun = "mean")
 
+ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+
+
+# 
+# ggplot(subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S")), aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Only good normal stomach samples")
+```
+
+## Spearman Correlation of Colon vs. Stomach score with signature estimates
+
+```{r, fig.width=8, fig.height=4}
+cor(ed[colnames(res_gsva), "Score"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})() |> barplot(las=2, main="Correlation of signature score with Colon vs. Stomach score", ylab="Spearman r")
+```
+
+
+## Spearman Correlation of Colon score with signature estimates
+
+```{r}
+cor(ed[colnames(res_gsva), "Colon"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()  |> barplot(las=2, main="Correlation of signature score with Colon score", ylab="Spearman r")
+```
+## Spearman Correlation of Stomach score with signature estimates
+
+```{r}
+cor(ed[colnames(res_gsva), "Stomach"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()  |> barplot(las=2, main="Correlation of signature score with Stomach score", ylab="Spearman r")
+```
+
+
+# GSVA with selected samples only
+
+```{r}
+#input_mat = as.matrix(norm_counts[,grepl("SRR13", colnames(norm_counts))])
+#rownames(input_mat) <- norm_counts$GeneSymbol
+#res_gsva = gsva(input_mat, sc_sets, kcdf="Gaussian")
+
+input_mat = count_mat[,subset(ed, !is.na(MethylationPatID))$sampleID]
+rownames(input_mat) <- gene_anno[rownames(input_mat), "GeneSymbol"]
+
+res_gsva = gsva(input_mat, sc_sets, kcdf="Poisson")
+#colnames(res_gsva) = ed[colnames(res_gsva), "Remark"]
+
+col_anno = ed[colnames(input_mat), c("Group", "Site", "Score", "Stomach", "Colon")]
+#rownames(col_anno) = paste0("X", rownames(col_anno))
+```
+
+```{r, fig.width=12}
+anno_cols = list(Group=c("IM"="red","Non-IM"="blue","Control"="green"))
+pheatmap(res_gsva, annotation_col = col_anno, labels_col = ed[colnames(res_gsva), "Remark"], annotation_colors = anno_cols)
+
+res_gsva_s1 <- res_gsva[, order(ed[colnames(res_gsva), "Score"])]
+pheatmap(res_gsva_s1, annotation_col = col_anno, labels_col = ed[colnames(res_gsva_s1), "Remark"], annotation_colors = anno_cols, cluster_cols=F)
+
+res_gsva_s2 <- res_gsva[, order(ed[colnames(res_gsva), "Colon"])]
+pheatmap(res_gsva_s2, annotation_col = col_anno, labels_col = ed[colnames(res_gsva_s2), "Remark"], annotation_colors = anno_cols, cluster_cols=F)
+
+
+# pheatmap(res_gsva[c("Enterocyte c","metaplastic stomach","Enterocyte a (prox)","Colonocyte"),], annotation_col = col_anno, labels_col = ed[colnames(res_gsva), "Remark"], annotation_colors = anno_cols)
+
+```
+
+
+
+```{r, fig.width=4, fig.height=4}
+ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Bulk Colon vs. Stomach score")
+```
+
+
+```{r, fig.width=12, fig.height=8, warning=FALSE}
+rr_ts <- reshape2::melt(res_gsva)
+colnames(rr_ts) <- c("Cluster", "Sample", "GSVA_Score")
+rr_ts$Sample <- gsub("^X","", rr_ts$Sample)
+rr_ts <- merge(rr_ts, ed, by.x="Sample", by.y="sampleID", all.x=T)
+rr_ts$Condition <- ifelse(grepl("^SI", rr_ts$Patient), "SI", ifelse(grepl("^HGAT", rr_ts$Patient), "Normal stomach", rr_ts$Group))
+
+#rr_ts$Patient <- ifelse(rr_ts$Site=="Antrum", "Normal Antrum", ifelse(rr_ts$Condition %in% c("Colon", "Duodenum"), "Intestine", rr_ts$Patient))
+
+ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) + 
+  geom_point(aes(col = Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  geom_hline(yintercept=0, lty=2) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  stat_summary()
+
+ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) + 
+  geom_point(aes(col = Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  geom_hline(yintercept=0, lty=2) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  geom_violin(aes(fill=Condition)) + 
+  stat_summary(fun = "mean")
+
+
+ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
 
 # 
 # ggplot(subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S")), aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Only good normal stomach samples")
@@ -155,17 +306,17 @@ ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) +
 # Spearman Correlation of Colon vs. Stomach score with signature estimates
 
 ```{r}
-cor(ed[colnames(res_gsva), "Score"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()
+cor(ed[colnames(res_gsva), "Score"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()  |> barplot(las=2, main="Correlation of signature score with Colon vs. Stomach score", ylab="Spearman r")
 ```
 
 
 # Spearman Correlation of Colon score with signature estimates
 
 ```{r}
-cor(ed[colnames(res_gsva), "Colon"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()
+cor(ed[colnames(res_gsva), "Colon"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()  |> barplot(las=2, main="Correlation of signature score with Colon score", ylab="Spearman r")
 ```
 # Spearman Correlation of Stomach score with signature estimates
 
 ```{r}
-cor(ed[colnames(res_gsva), "Stomach"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()
+cor(ed[colnames(res_gsva), "Stomach"], t(res_gsva), method="spearman") |> (\(x) {x[, order(x[1,]),drop=F]})()  |> barplot(las=2, main="Correlation of signature score with Stomach score", ylab="Spearman r")
 ```

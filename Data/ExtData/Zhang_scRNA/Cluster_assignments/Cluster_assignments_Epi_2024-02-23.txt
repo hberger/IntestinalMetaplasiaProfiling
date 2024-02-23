@@ -1,0 +1,12 @@
+ClusterID	Type	Label	Markers
+0	Epi	Gland base cells	MUC6+REG1A+LGR5+;MJV
+1	Epi	Pit cells 4	MUC5AC+;MJV
+2	Epi	Pit cells 1	MJV;GKN1/2
+3	Epi	Pit cells 3	MUC5AC+;MJV
+4	Epi	Pit cells 2	MUC5AC; SPINK1, LYZ; MJV
+5	Epi	Gland base cells/cycling	MUC6+REG1A+LGR5+;MJV
+6	Epi	G-cells	GAST+GHRL+;MJV
+7	Epi	Metaplastic	MjV
+8	Epi	Metaplastic SC	MjV
+9	Epi	Goblet cells	MUC2+
+10	Epi	EEC	MjV

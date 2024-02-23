@@ -68,6 +68,13 @@ for (f in inp_files) {
 }
 ```
 
+
+```{r, fig.width=8, fig.height=5}
+par(mar=c(10,4,4,1))
+sapply(wgs_celltype_um_epic_cpg, nrow) |> sort() |> barplot(las=2, main="Number of unmethylated CpGs per celltype")
+```
+
+
 ```{r}
 xx <- lapply(wgs_celltype_um_epic_cpg, function(x) x[, c("cpg_id", "celltype")] )  |> do.call(rbind, args=_)
 
@@ -78,6 +85,14 @@ celltype_specific_unmeth_cpg <- xx_c[xx_c == 1] |> names()
 wgs_celltype_specific_epc_cpg <- lapply(wgs_celltype_um_epic_cpg, function(x) x[x$cpg_id %in% celltype_specific_unmeth_cpg])
 ```
 
+## Number of specifically hypomethylated sites per tissue/cell type
+
+```{r, fig.width=8, fig.height=5}
+par(mar=c(10,4,4,1))
+sapply(wgs_celltype_specific_epc_cpg, nrow) |> sort() |> barplot(las=2, main="Number of specifically unmethylated CpGs per celltype")
+```
+
+# Overlap with IM DM CpGs
 
 
 ```{r}
@@ -109,7 +124,9 @@ all_hyper_cpg[[n]] <- hyper_cpg_592_594
 all_hypo_cpg[[n]] <- hypo_cpg_592_594
 ```
 
-We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+We identified `r length(hyper_cpg_592_594)` hypermethylated and `r length(hypo_cpg_592_594)` hypomethylated CpGs. 
+
+
 #### Overlap with unmethylated cell-type specific CpG blocks from WGS atlas
 
 
@@ -140,8 +157,10 @@ sapply(all_ovlp_hyper, nrow) |> sort() |> barplot(las=2, cex.names  = .7, main="
 
 ```
 
-The highest overlap of hypermethlyated CpG is with CpG sites specifically unmethylated in gastric epithelial cells
+The highest overlap of hypermethlyated CpG is with CpG sites specifically unmethylated in gastric epithelial cells.
 
+
+## Odds ratio of hyper-/hypomethylation in unmethlyated sites
 
 ```{r}
 ovlp_all_hypo_df <- do.call(rbind, ovlp_res_hypo)
@@ -169,7 +188,19 @@ ovlp_all_hyper_df$celltype = factor(ovlp_all_hyper_df$celltype, levels = ovlp_al
 ovlp_all_hypo_df <- add_OR(ovlp_all_hypo_df)
 ovlp_all_hypo_df <- ovlp_all_hypo_df[order(ovlp_all_hypo_df$or_ci_lower, decreasing = T),]
 ovlp_all_hypo_df$celltype = factor(ovlp_all_hypo_df$celltype, levels = ovlp_all_hypo_df$celltype)
+```
 
+### OR for hypomethylated CpG
+
+```{r}
+knitr::kable(ovlp_all_hypo_df)
+```
+
+
+### OR for hypermethylated CpG
+
+```{r}
+knitr::kable(ovlp_all_hyper_df)
 ```
 
 ```{r, fig.width=8, fig.height=4}
@@ -190,6 +221,8 @@ tmp
 ```
 
 # Sites specifically unmethylated in Stomach hypomethylated in IM
+
+There should be none...
 
 ```{r}
 tmp <- all_ovlp_hypo[["Gastric-Ep"]]

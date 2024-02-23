@@ -1,0 +1,21 @@
+ClusterID	Type	Label	Markers
+0	Epi	Pit cells 1	MUC5AC; GKN1; GKN2; TFF1
+1	Epi	Pit cells 2	MUC5AC;SPINK1
+2	Epi	Pit cells 3	MUC5AC
+3	Epi	Pit cells 4	MUC5AC;TFF1,CA2
+4	Epi	Gland base cell	LGR5, MUC6
+5	Epi	Pit cell/TA	MUC5AC;TOP2A; IL8;CXCL3
+6	Epi	Gland base cell 2	VIL1
+7 	Immune	T-cell	VIM+EPCAM-; KLRB1;CD3
+8 	Stroma	B-Cell	VIM+EPCAM-;IGJ, MZB1;CD79A
+9	Epi	Metaplastic	Vil1;FABP1;APOA1
+10 	Epi	G-cell	GAST
+11	Epi	Metaplastic SC	Vil1;OLFM4;DMBT1
+12 	Stroma	Stroma Fibrobl a	VIM+EPCAM-;Procr,Col1a1
+13 	Stroma	Stroma Fibrobl b	VIM+EPCAM-;CD34+
+14 	Immune	B-cell/MF/DC	VIM+EPCAM-,CD19;MS4A1;CD68,CD14,IRF8
+15	Epi	Goblet	MUC2
+16 	Stroma	Mastcell/Granulocyte	VIM+EPCAM-,CPA3;TPSAB1;CD69
+17 	Epi	EEC	CHGA
+18 	Stroma	Stroma Myofib	VIM+EPCAM-;Myh11
+

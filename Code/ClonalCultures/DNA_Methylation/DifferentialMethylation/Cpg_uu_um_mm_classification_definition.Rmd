@@ -1,0 +1,129 @@
+---
+title: "Classification of CpG on EPIC arrays/WGS in uu/um/mm sites in healthy antrum"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+library(ggplot2)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+source("../../../Utils/pheatmap.type.R")
+
+```
+
+
+# Overview
+
+We here use data from healthy antrum Infinium EPIC arrays to classify CpG sites into three classes - biallelically methylated (mm), biallelically unmethylated (uu) and hemimethylated (um) sites. 
+
+```{r, message=FALSE}
+load("../../../../Data/Processed/ClonalCultures/DNAm/myNorm_IM_nonIM_and_healthy_stomach.RData")
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/myLoad_IM_nonIM_and_healthy_stomach.RData")
+
+ed = myLoad$pd |> as.data.frame()
+rm(myLoad)
+ed$SampleLabel <- ifelse(ed$Project=="2020-186-ILL", paste0(ed$Sample_Group, "_", ed$PatientID, "_", ed$CloneID), ed$Sample_Name )
+
+ed$Sample_Group2 <- ifelse(ed$Project == "2020-186-ILL", paste0("Clonal-",ed$Sample_Group), ifelse(ed$Project=="KFR_IM", paste0("Polyclonal-",ed$Sample_Group), paste0("Healthy-", ed$Stomach_site)) )
+
+ed$Sample_Group2 <- factor(ed$Sample_Group2, levels=c("Healthy-Antrum","Healthy-Corpus","Healthy-Fundus","Polyclonal-Normal","Clonal-non-IM","Polyclonal-Atrophy","Polyclonal-IM","Clonal-IM"))
+```
+
+## Healthy antrum
+
+```{r}
+mm = myNorm[, subset(ed, Sample_Group2 %in% c("Healthy-Antrum", "Healthy-Corpus"))$Sample_ID]
+
+row_means_by_site <- limma::avearrays(mm, ed[colnames(mm), "Stomach_site"])
+
+
+cpg_class_u.m_array <- apply(row_means_by_site, 2, function(x) {ifelse(x < 0.25, "uu", ifelse(x>0.75, "mm", "um")) |> factor(levels=c("uu","um","mm")) }, simplify = F  ) |> as.data.frame()
+
+for (n in colnames(row_means_by_site)) {
+  v <- row_means_by_site[, n]
+  hist(v, 100, main=paste0("Mean beta in healthy ",n, " samples") )
+  abline(v=c(0.25, 0.75), lty=2, lwd=1, col="red")
+  
+  m <- table(cpg_class_u.m_array[, n], dnn=c(paste0("Methylation class ",n)))
+  print(m)
+  m |> prop.table()  |> round(digits=3) |> print()
+}
+
+table(cpg_class_u.m_array$Antrum, cpg_class_u.m_array$Corpus, dnn=c("Antrum", "Corpus")) |> prop.table() |> round(digits=3)
+
+```
+
+# WGS methylation classes
+
+See Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/Antrum_methylation_class_WGS.Rmd for details. 
+[0=uu, 1=um, 2=mm]
+
+```{r}
+cpg_class_wgs <- readRDS(file.path("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/", "WGS_Cpg_Meth_classes_EPIC.rds"))
+```
+
+
+```{r}
+table(cpg_class_wgs[, "Gastric.antrum"])
+```
+```{r}
+# this is very slow and in fact I don't know if it ever returns without error
+# tmp <- merge(cpg_class_u.m_array, as.data.frame(cpg_class_wgs), by.x=0, by.y=0, all.y=T, all.x=T)
+t1 <- cpg_class_u.m_array
+colnames(t1) <- paste0(colnames(t1), "_EPIC")
+t1 <- apply(t1, 2, as.character) |> as.data.frame()
+rownames(t1) <- rownames(cpg_class_u.m_array)
+t1$ID <- rownames(t1)
+
+num_to_label <- c("uu","um","mm")
+t2 <- cpg_class_wgs |> as.data.frame()
+colnames(t2) <- paste0(colnames(t2), "_WGS")
+t2 <- apply(t2,2, function(x) num_to_label[x+1]) |> as.data.frame()
+rownames(t2) <- rownames(cpg_class_wgs)
+t2$ID <- rownames(t2)
+tmp <- merge(t1, t2, by="ID", all.x=T, all.y=T)
+
+m <- table(tmp$Antrum_EPIC, tmp$Gastric.antrum_WGS, dnn=c("EPIC","WGS"))
+m
+prop.table(m) |> round(digits = 3)
+prop.table(m) |> pheatmap::pheatmap()
+
+table(tmp$Antrum_EPIC == tmp$Gastric.antrum_WGS, dnn="Concordance Antrum CpG") |> prop.table()
+```
+
+# Export
+
+We export the full table of CpGs with classification in EPIC methylation array (Antrum, Corpus) and WGS (Gastric fundus/corpus/antrum, SI, Colon left / right) to file *CpG_classifications_u.m_EPIC_and_WGS.rds*.
+
+```{r}
+saveRDS(tmp, file=file.path(data_storage_folder,"../..",  "CpG_classifications_u.m_EPIC_and_WGS.rds"), compress=T)
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
