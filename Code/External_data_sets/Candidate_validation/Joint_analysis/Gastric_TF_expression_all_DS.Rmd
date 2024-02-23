@@ -1,0 +1,188 @@
+---
+title: "Analysis of stomach/intestine specific TF gene expression in healthy and metaplastic stomach"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+rm(list=ls())
+library(limma)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(data.table)
+library(ggpubr)
+library(gridExtra)
+library(naturalsort)
+
+#devtools::install_github("teunbrand/ggnomics")
+#library(ggnomics) # for facet_nested()
+#remotes::install_github("teunbrand/ggh4x")
+library(ggh4x)
+```
+
+# Data sets 
+
+We use the following data sets to validate findings from MB119: 
+
+  - *in-vivo IM/Atrophy* data sets:
+     - Nookaew et al., BMC Medical Genomics 2013. GSE27411. n=3 samples from non-infected patients (antrum and corpus) and unpaired samples from patients with atrophy (antrum and corpus). Illumina humanRef-8 v2.0 beadchip.
+     - Companioni et al., PlosOne 2017. GSE78523. n=15 (11 Antrum, 4 Body). Affymetrix Human Almac Xcel Array
+     - Thorell et al., Infection & Immunity 2017 (DOI: 10.1128/IAI.00031-17). E-MTAB-3689; n=25 RNA-Seq of gastritis, mild atrophy, extensive atrophy/IM
+     
+  - *in-vitro* data sets of stomach and intestine:
+     - Colon (van Wetering et al.; DOI 10.1016/j.cell.2015.03.053) vs. Stomach (Bartfeld et al. Gastroenterology 2015. GSE60557. 2A/2C gland derived organoids). Both hybridized to Affymetrix Human Gene 2.0 ST Arrays. 
+     - Kayisoglu et al. (Bartfeld lab, DOI 10.1136/gutjnl-2019-319919). GSE127938. 3 samples each from human stomach antrum + corpus ("stomach"), cranial intestine (duodenum, jejunum) and caudal intestine (ileum, colon) cultured as organoids and subjected to RNA-Seq
+     - Zhenshou/China Small intestine vs. stomach
+     
+  - *ex-vivo* data sets of healthy and metaplastic stomach
+     - Zhenshou/China IM vs non-IM 
+     - MPIIB ESGIv2 IM vs. non-IM
+     - MPIIB ESGIv2 IM vs. normal stomach
+     
+For each data set we compare Atrophy/IM vs. healthy/control conditions in stomach or large/small intestine vs. stomach samples.      
+
+
+```{r}
+all_ds = readRDS("Joint_datasets.rds")
+```
+
+
+# Plots
+
+## Absolute values
+
+```{r}
+#sel_genes = c("GAST","ATP4A","ATP4B","CDX2","SOX2","SIM2","MEIS1","MEIS2","PDX1","GATA3","GATA4","GATA5","IRX2","IRX5","TCF7L1", "TCF7L2", "LEF1")
+sel_genes = c("CDX2","HNF4A", "HNF4G", "SOX2","CDX1", "POU2F1","RUNX2","BPTF","FOXJ1","TCF7L1","TCF7L2","LEF1","TCF7","GFI1","HOXA13","PAX4","HOXA4")
+```
+
+
+```{r}
+
+extract_table_ts <- function(ds) {
+  emat = ds[["emat"]]
+  anno = ds[["anno"]]
+  ed = ds[["sample_description"]]
+  
+  sel_probes = subset(anno, SYMBOL %in% sel_genes)
+
+  emat_sel = emat[sel_probes$PROBE_ID,order(ed[colnames(emat),]$Condition), drop=F]
+
+  emat_ts = reshape2::melt(emat_sel, stringsAsFactors=F)
+  colnames(emat_ts) = c("PROBE_ID","SampleID","Expression")
+  emat_ts$PROBE_ID = as.character(emat_ts$PROBE_ID)
+  emat_ts$SampleID = as.character(emat_ts$SampleID)
+  emat_ts = merge(emat_ts, ed, by="SampleID", sort=F)
+  emat_ts$Condition = paste0(toupper(substr(emat_ts$Condition,1,1)),substr(emat_ts$Condition,2,nchar(emat_ts$Condition)))
+  emat_ts = merge(emat_ts, anno, by="PROBE_ID", all.x=T, sort=F)
+  
+  return(emat_ts)
+  
+}
+
+combined_tabs = as.data.table(do.call(rbind, lapply(all_ds, extract_table_ts)))
+
+condition_levels_ordered = c("Healthy stomach","Intestinal/-like")
+
+combined_tabs$Condition = factor(combined_tabs$Condition, levels=condition_levels_ordered)
+
+combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Hs, Caudal intestine","Kayisoglu, Hs, Cranial intestine","van de Wetering colon biobank","China SI vs Stomach","Nookaew et al.,antrum", "Nookaew et al.,corpus", "Companioni et al.", "Thorell, Hs, Atrophy", "Thorell, Hs, Ext. atrophy","ESGIv2 IM vs normal", "ESGIv2 IM vs non-IM", "ESGIv2 IM vs non-IM, P591", "ESGIv2 IM vs non-IM, P592", "ESGIv2 IM vs non-IM, P594", "China IM vs Non-IM") )
+#combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=naturalsort(unique(combined_tabs$Cohort)))
+
+combined_tabs[, mean_stomach:=mean(ifelse(Condition=="Healthy stomach",Expression,NA), na.rm=T), by=c("Cohort","SYMBOL","PROBE_ID")]
+combined_tabs[,Expression_antrum_centered:=Expression-mean_stomach]
+```
+
+```{r}
+lapply(all_ds, function(x) {ed = x[["sample_description"]]; table(ed$Cohort, ed$Condition); }  )
+```
+
+
+```{r, fig.width=18, fig.height=4}
+
+for (gg in sel_genes) {
+  
+  emat_ts = subset(combined_tabs, SYMBOL==gg)
+
+  p = ggplot(emat_ts, aes(x=Condition, y=Expression)) + geom_boxplot(aes(fill=Cohort)) + facet_grid(~ PROBE_ID + Cohort) + ggtitle(gg) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + geom_point()
+  print(p)
+  
+}
+
+```
+
+## Relative to Healthy Stomach
+
+```{r, fig.width=18, fig.height=4, warning=FALSE}
+all_plots = list()
+
+for (gg in sel_genes) {
+  emat_ts = subset(combined_tabs, SYMBOL==gg & Condition %in% c("Healthy stomach","Intestinal/-like"))
+  ymin = min(-3,min(emat_ts$Expression_antrum_centered))
+  ymax = max(3, max(emat_ts$Expression_antrum_centered))
+
+  p = ggplot(emat_ts, aes(x=Condition, y=Expression_antrum_centered)) + 
+    #stat_summary(fun.y = mean, fun.ymin = mean, fun.ymax = mean,  geom="crossbar",width=0.5, aes(col=Site)) + 
+    stat_summary(fun.y = mean, geom="bar",width=0.5, aes(col=Condition)) + 
+    geom_point(aes(col=Condition)) + 
+    facet_nested(~  Cohort + PROBE_ID) + ggtitle(gg) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), strip.text.x = element_text(hjust=0, size=8, angle=0)) + 
+    coord_cartesian(ylim=c(ymin,ymax)) + 
+    geom_hline(yintercept = 0, col="grey") + 
+    stat_compare_means(method="t.test", aes(label = paste0(..p.signif..,"\n",..p.format..)), label.y = ymax*0.9, label.x = 1.5) + 
+    ylab("Expression relative to healthy stomach mean")
+  all_plots[[gg]] = p
+  print(p)
+}
+```
+
+<!-- ```{r, warning=FALSE} -->
+<!-- sel_genes2 = c("CDX2","GATA4","GATA5","MEIS1","MEIS2","PDX1","IRX2","IRX5","SIM2") -->
+
+<!-- for (gg in sel_genes2) { -->
+<!--   emat_ts = subset(combined_tabs, SYMBOL==gg & Site %in% c("Antrum","Corpus")) -->
+<!--   ymin = min(-3,min(emat_ts$Expression_antrum_centered)) -->
+<!--   ymax = max(3, max(emat_ts$Expression_antrum_centered)) -->
+
+<!--   p = ggplot(emat_ts, aes(x=Site, y=Expression_antrum_centered)) +  -->
+<!--     #stat_summary(fun.y = mean, fun.ymin = mean, fun.ymax = mean,  geom="crossbar",width=0.5, aes(col=Site)) +  -->
+<!--     stat_summary(fun.y = mean, geom="bar",width=0.5, aes(col=Site)) +  -->
+<!--     geom_point(aes(col=Site)) +  -->
+<!--     facet_nested(~  Cohort + PROBE_ID) + ggtitle(gg) + -->
+<!--     theme_bw() + -->
+<!--     theme(strip.text.x = element_text(hjust=0, size=8), axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.y=element_text(size=10), axis.text.y=element_text(size=14)) +  -->
+<!--     coord_cartesian(ylim=c(ymin,ymax)) +  -->
+<!--     geom_hline(yintercept = 0, col="grey") +  -->
+<!--     stat_compare_means(method="t.test", aes(label = paste0(..p.signif..,"\n",..p.format..)), label.y = ymax*0.8, label.x = 1.1) +  -->
+<!--     ylab("Expr. relative to antrum mean") + xlab("") -->
+<!--   all_plots[[gg]] = p -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- ```{r, fig.width=18, fig.height=20, warning=FALSE} -->
+<!-- marrangeGrob(all_plots[sel_genes2], nrow=5, ncol=2) -->
+<!-- ``` -->
+
+
+<!-- ```{r, fig.width=12, fig.height=22,warning=FALSE} -->
+<!-- marrangeGrob(all_plots[sel_genes2], nrow=9, ncol=1) -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- pdf(file="GE_Validation_selected_genes.pdf", height = 22, width=12) -->
+<!-- marrangeGrob(all_plots[sel_genes2], nrow=9, ncol=1) -->
+<!-- dev.off() -->
+<!-- ``` -->
+

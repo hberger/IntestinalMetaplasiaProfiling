@@ -1,0 +1,194 @@
+---
+title: "Analysis of stomach/intestine specific TF target gene expression in healthy and metaplastic stomach"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+rm(list=ls())
+library(GEOquery)
+library(limma)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(data.table)
+library(ggpubr)
+library(gridExtra)
+library(naturalsort)
+library(DESeq2)
+
+#devtools::install_github("teunbrand/ggnomics")
+#library(ggnomics) # for facet_nested()
+#remotes::install_github("teunbrand/ggh4x")
+library(ggh4x)
+```
+
+# Data sets 
+
+We use the following data sets to validate findings from MB119: 
+
+  - *in-vivo IM/Atrophy* data sets:
+     - Nookaew et al., BMC Medical Genomics 2013. GSE27411. n=3 samples from non-infected patients (antrum and corpus) and unpaired samples from patients with atrophy (antrum and corpus). Illumina humanRef-8 v2.0 beadchip.
+     - Companioni et al., PlosOne 2017. GSE78523. n=15 (11 Antrum, 4 Body). Affymetrix Human Almac Xcel Array
+     - Thorell et al., Infection & Immunity 2017 (DOI: 10.1128/IAI.00031-17). E-MTAB-3689; n=25 RNA-Seq of gastritis, mild atrophy, extensive atrophy/IM
+     
+  - *in-vitro* data sets of stomach and intestine:
+     - Colon (van Wetering et al.; DOI 10.1016/j.cell.2015.03.053) vs. Stomach (Bartfeld et al. Gastroenterology 2015. GSE60557. 2A/2C gland derived organoids). Both hybridized to Affymetrix Human Gene 2.0 ST Arrays. 
+     - Kayisoglu et al. (Bartfeld lab, DOI 10.1136/gutjnl-2019-319919). GSE127938. 3 samples each from human stomach antrum + corpus ("stomach"), cranial intestine (duodenum, jejunum) and caudal intestine (ileum, colon) cultured as organoids and subjected to RNA-Seq
+     - Zhenshou/China Small intestine vs. stomach
+     
+  - *ex-vivo* data sets of healthy and metaplastic stomach
+     - Zhenshou/China IM vs non-IM 
+     - MPIIB ESGIv2 IM vs. non-IM
+     - MPIIB ESGIv2 IM vs. normal stomach
+     
+For each data set we compare Atrophy/IM vs. healthy/control conditions in stomach or large/small intestine vs. stomach samples.      
+
+
+```{r}
+all_ds = readRDS("Joint_datasets.rds")
+
+# make sure to change the sign for the Kayisoglu comparisons
+#old_to_new_comparison_names = c("China_IM_IM_vs_non-IM_all"="China_IM_vs_non-IM","China_SIvsStomach_SI_vs_Normal_AC"="China_SI_vs_Normal_Stomach","Companioni_IM_vs_healthy"="Companioni_IM_vs_healthy","ESGIv2_IM_vs_nonIM_IM_vs_non-IM_all_samples"="ESGIv2_IM_vs_nonIM","ESGIv2_IM_vs_normal_IM_all_vs_NormalAntrum"="ESGIv2_IM_all_vs_NormalAntrum","Kayisoglu_caudal_Stomach_vs_Caudal"="Kayisoglu_Caudal_vs_Stomach","Kayisoglu_cranial_Stomach_vs_Cranial"="Kayisoglu_Cranial_vs_Stomach","Nookaew_Atrophy_vs_NI_Antrum"="Nookaew_Atrophy_vs_NI_Antrum","Nookaew_Atrophy_vs_NI_Corpus"="Nookaew_Atrophy_vs_NI_Corpus","Thorell_atrophy_Atrophy_vs_normal_good_samp"="Thorell_Atrophy_vs_Normal_Stomach","Thorell_ext.atrophy_ExtAtrophy_vs_normal_good_samp"="Thorell_ExtAtrophy_vs_Normal_Stomach","VanDeWetering_colon_vs_stomach_glands"="VanDeWetering_colon_vs_stomach", "ESGIv2_IM_vs_nonIM_IM_591_vs_NonIM"="ESGIv2_IM_591_vs_NonIM", "ESGIv2_IM_vs_nonIM_IM_592_vs_NonIM"="ESGIv2_IM_592_vs_NonIM","ESGIv2_IM_vs_nonIM_IM_594_vs_NonIM" = "ESGIv2_IM_594_vs_NonIM")
+
+old_to_new_comparison_names =  c("Nookaew_Atrophy_vs_NI_Antrum"="Nookaew_Atrophy_vs_NI_Antrum","Nookaew_Atrophy_vs_NI_Corpus"="Nookaew_Atrophy_vs_NI_Corpus","Companioni_IM_vs_healthy"="Companioni_IM_vs_healthy","Kayisoglu_caudal_Stomach_vs_Caudal"="Kayisoglu_Stomach_vs_Caudal","Kayisoglu_cranial_Stomach_vs_Cranial"="Kayisoglu_Stomach_vs_Cranial","Thorell_atrophy_Atrophy_vs_normal_good_samp"="Thorell_Atrophy_vs_normal","Thorell_ext.atrophy_ExtAtrophy_vs_normal_good_samp"="Thorell_ExtAtrophy_vs_normal","VanDeWetering_colon_vs_stomach_glands"="VanDeWetering_colon_vs_stomach","ESGIv2_IM_vs_nonIM_IM_vs_non-IM_all_samples"="ESGIv2_IM_vs_non-IM","ESGIv2_IM_vs_normal_IM_all_vs_NormalAntrum" ="ESGIv2_IM_vs_NormalAntrum","China_IM_IM_vs_non-IM_all"="China_IM_vs_non-IM","China_SIvsStomach_SI_vs_Normal_AC"="China_SI_vs_Normal_AC", "ESGIv2_IM_vs_nonIM_594_IM_594_vs_NonIM"="ESGIv2_IM_594_vs_NonIM", "ESGIv2_IM_vs_nonIM_592_IM_592_vs_NonIM"="ESGIv2_IM_592_vs_NonIM","ESGIv2_IM_vs_nonIM_591_IM_591_vs_NonIM" = "ESGIv2_IM_591_vs_NonIM")
+
+load("./Results/2022-03-16/fGSEA_Results.Rdata")
+load("./Results/2022-03-16/Geneset_collections.Rdata")
+
+```
+
+# GSEA
+
+```{r}
+tmp = mapply(function(x, n) {x$comparison=n; return(x)}, all_gsea_results, names(all_gsea_results), SIMPLIFY = F)
+gsea_df = do.call(rbind, tmp)
+gsea_df[, sign_count:=sum(padj<0.2), by="pathway"]
+
+gsea_df[, NES:=NES*ifelse(grepl("Kayisoglu", comparison), -1, 1)]
+gsea_df[, ES:=ES*ifelse(grepl("Kayisoglu", comparison), -1, 1)]
+
+table(gsea_df$sign_count, gsea_df$GeneSetCollection, dnn=c("N signif. comparisons","DB"))
+```
+
+
+### HALLMARK gene sets
+
+```{r, fig.height=12, fig.width=12}
+NES_mat = dcast(subset(gsea_df, sign_count >= 7), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="HALLMARK")
+mm = as.matrix(tmp[, 4:(ncol(tmp))])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="HALLMARK gene sets enriched in at least 7 comparisons")
+```
+
+### MOTIF
+
+```{r, fig.height=12}
+NES_mat = dcast(subset(gsea_df, sign_count >= 7), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="MOTIF")
+mm = as.matrix(tmp[, 4:(ncol(tmp))])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="MOTIF enriched in at least 7 comparisons")
+```
+
+  - targets of HNF4 -> high in both cranial and caudal intestine compared with stomach
+  - targets of CDX2/PAX/EVI1/OCT/HOXA4/HOXA13/TCF4: high particularly in caudal intestines, less so in cranial. 
+
+### MOTIFs, without MIRs
+
+```{r, fig.height=12}
+NES_mat = dcast(subset(gsea_df, sign_count >= 6), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="MOTIF" & !grepl("^MIR|_MIR", pathway))
+mm = as.matrix(tmp[, 4:(ncol(tmp))])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="MOTIF enriched in at least 6 comparisons")
+```
+
+### MOTIF, selected gene sets
+
+```{r, fig.height=12}
+NES_mat = dcast(subset(gsea_df, sign_count >= 0), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="MOTIF" & grepl("CDX|HNF4|PAX|EVI1|OCT|HOXA4|HOXA13|TCF4", pathway))
+mm = as.matrix(tmp[, 4:(ncol(tmp))])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="MOTIF, selected TFs")
+```
+
+### PATHWAY
+
+```{r, fig.height=25, fig.width=20}
+NES_mat = dcast(subset(gsea_df, sign_count >= 10), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+tmp = subset(NES_mat, GeneSetCollection=="PATHWAYS")
+mm = as.matrix(tmp[, 4:ncol(tmp)])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="PATHWAYS enriched in at least 10 comparisons", fontsize_row = 8)
+
+```
+
+  - higher in stomach: IFN-signaling, STAT3-signaling (why?)
+  - higher in caudal/cranial intestine: HNF4A targets, FOXA2 (pioneering factor endoderm, aka HNF3B), APC/beta-catenin targets, cell cycle
+  
+
+### PATHWAYS, selected gene sets
+
+```{r, fig.height=12}
+NES_mat = dcast(subset(gsea_df, sign_count >= 0), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="PATHWAYS" & grepl("CDX|HNF4|TCF4|IFN|catenin|STAT3", pathway))
+mm = as.matrix(tmp[, 4:(ncol(tmp))])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="PATHWAY, selected gene sets")
+```
+
+## Custom data sets
+
+### All scores
+  
+```{r, fig.height=6}
+NES_mat = dcast(subset(gsea_df, sign_count >= 10), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="CUSTOM")
+mm = as.matrix(tmp[, 4:ncol(tmp)])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="CUSTOM gene sets enriched in at least 10 comparisons", fontsize_row = 8)
+
+```
+```{r, eval=FALSE}
+xx = dcast(subset(gsea_df, sign_count == 1 & GeneSetCollection == "MOTIF" & !grepl("^MIR|_MIR", pathway)), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+# not much of interest so far
+```
+
+### Only significant (FDR < 20%) scores
+
+```{r, fig.height=6}
+NES_mat = dcast(subset(gsea_df, sign_count >= 10 & padj < 0.2), pathway + GeneSetCollection + sign_count ~ comparison, value.var="NES")
+
+tmp = subset(NES_mat, GeneSetCollection=="CUSTOM")
+mm = as.matrix(tmp[, 4:ncol(tmp)])
+rownames(mm) = tmp$pathway
+colnames(mm) = old_to_new_comparison_names[colnames(mm)]
+pheatmap(mm, main="CUSTOM gene sets enriched in at least 10 comparisons with FDR < 20%", fontsize_row = 8)
+
+```
