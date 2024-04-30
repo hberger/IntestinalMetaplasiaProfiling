@@ -1,0 +1,59 @@
+---
+title: "Data import - GSE173264"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(data.table)
+```
+
+```{r}
+all_files <- list.files("Raw", pattern="*.gz", full.names = T)
+names(all_files) <- gsub(".txt.gz","",basename(all_files))
+
+all_tabs <- list()
+for (n in names(all_files)) {
+  tmp <- fread(all_files[[n]], sep="\t")
+  setkey(tmp, "Gene ID")
+  all_tabs[[n]] <- tmp
+}
+
+
+gene_anno = all_tabs[[1]][,c("Gene Symbol","Gene ID")]
+# fix date like gene symbols
+library(org.Hs.eg.db)
+gs <- select(org.Hs.eg.db, keys=gene_anno$`Gene ID`, keytype = "ENTREZID", columns="SYMBOL")
+gene_anno <- merge(gene_anno, gs, by.x="Gene ID", by.y="ENTREZID", all.x=T, sort=F)
+gene_anno[["Gene Symbol"]] <- NULL
+setnames(gene_anno, "SYMBOL", "GeneSymbol")
+
+final_tab <- gene_anno
+
+for (n in names(all_tabs)) {
+  tmp <- all_tabs[[n]]
+  sn <- colnames(tmp)[3]
+  final_tab[[n]] <- tmp[final_tab$`Gene ID`,][[sn]]
+}
+
+
+```
+
+```{r}
+boxplot(as.matrix(final_tab[, 3:ncol(final_tab)]))
+```
+
+```{r}
+saveRDS(final_tab, "GSE173264_iPSC_CDX2_mat.rds", compress=T)
+```
+

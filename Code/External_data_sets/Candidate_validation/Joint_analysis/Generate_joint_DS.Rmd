@@ -22,7 +22,7 @@ library(ggplot2)
 library(reshape2)
 library(data.table)
 library(naturalsort)
-#library(DESeq2)
+library(DESeq2)
 
 #devtools::install_github("teunbrand/ggnomics")
 #library(ggnomics) # for facet_nested()
@@ -50,6 +50,10 @@ We use the following data sets to validate findings from MB119:
           
 For each data set we compare Atrophy/IM vs. healthy/control conditions in stomach or large/small intestine vs. stomach samples.      
 
+```{r}
+data_folder_validation <- "../../../../Data/ExtData/Validation_DataSets"
+```
+
 
 ## Nookaew et al. 
 
@@ -57,7 +61,7 @@ Normalized data was downloaded from GEO and gene annotations were updated based 
 
 ```{r}
 nookaew_env_dge = new.env()
-load("/data_genome2/public_data/GSE27411_Hpy_gastric_atrophy/analysis/Results/2020-03-04/DGE_analysis_image.Rdata", nookaew_env_dge)
+load(file.path(data_folder_validation, "GSE27411_Hpy_gastric_atrophy/analysis/Results/2020-03-04/DGE_analysis_image.Rdata"), nookaew_env_dge)
 
 tmp = get("normalized",nookaew_env_dge)
 # probe annotation must include gene symbol, probe ID and optionally a transcript ID
@@ -69,7 +73,7 @@ colnames(tmp_anno) = gsub("GB_ACC","TX_ID", gsub("Row.names","PROBE_ID",colnames
 # sample annotation must include sample ID and stomach site
 tmp_ed = get("ed", nookaew_env_dge)
 colnames(tmp_ed) = gsub("sample_ID","SampleID", gsub("site","Site", colnames(tmp_ed)))
-tmp_ed$Cohort = paste0("Nookaew et al.",",",tmp_ed$Site)
+tmp_ed$Cohort = paste0("Nookaew IM",",",tmp_ed$Site)
 sel_samples = subset(tmp_ed, condition != "Hpy infected")
 sel_samples$Condition = ifelse(sel_samples$condition == "non-infected", "healthy stomach", "intestinal/-like")
 
@@ -86,9 +90,9 @@ Normalized data was downloaded from GEO. Probesets with less than 90% aligned pr
 
 ```{r}
 # companioni_env = new.env()
-# load("/data_genome2/public_data/GSE78523_IM_GC/data_GSE78523_full.Rdata", companioni_env)
+# load(file.path(data_folder_validation,  "GSE78523_IM_GC/data_GSE78523_full.Rdata", companioni_env)
 companioni_env_dge = new.env()
-load("/data_genome2/public_data/GSE78523_IM_GC/Results/2022-02-23/DGE_results.Rdata", companioni_env_dge)
+load(file.path(data_folder_validation,  "GSE78523_IM_GC/Results/2022-02-23/DGE_results.Rdata"), companioni_env_dge)
 
 tmp = get("normalized",companioni_env_dge)
           
@@ -105,7 +109,7 @@ rownames(tmp_anno) = tmp_anno$PROBE_ID
 
 tmp_ed = get("pheno", companioni_env_dge)
 colnames(tmp_ed) = gsub("geo_accession","SampleID", gsub("source_tissue","Site", colnames(tmp_ed)))
-tmp_ed$Cohort = "Companioni et al."
+tmp_ed$Cohort = "Companioni IM"
 tmp_ed$SampleID = as.character(tmp_ed$SampleID)
 sel_samples = subset(tmp_ed, grepl("Control", pathology) & Site == "Antrum")
 sel_samples$Condition = ifelse(sel_samples$pathology=="Healthy Control","healthy stomach","intestinal/-like")
@@ -119,14 +123,13 @@ rm(tmp_ed, tmp_dge, tmp, tmp_anno, sel_samples, sel_comps, sel_genes, sel_probes
 rm(companioni_env_dge)
 ```
 
-
 ## Kayisoglu / Bartfeld et al. RNA-Seq data
 
 ```{r}
 kayisoglu_env = new.env()
-load("/data_genome2/public_data/GSE127938_Bartfeld_gut_organoids/analysis/GSE127938_human_RNASeq.Rdata", kayisoglu_env)
+load(file.path(data_folder_validation,  "GSE127938_Bartfeld_gut_organoids/analysis/GSE127938_human_RNASeq.Rdata"), kayisoglu_env)
 kayisoglu_env_dge = new.env()
-load("/data_genome2/public_data/GSE127938_Bartfeld_gut_organoids/analysis/Results/2022-02-24/Bartfeld_DGE_all.Rdata", kayisoglu_env_dge)
+load(file.path(data_folder_validation,  "GSE127938_Bartfeld_gut_organoids/analysis/Results/2022-02-24/Bartfeld_DGE_all.Rdata"), kayisoglu_env_dge)
 
 tmp = get("normalized",kayisoglu_env_dge)
 
@@ -145,7 +148,7 @@ tmp_dge = get("all_results", kayisoglu_env_dge)
 
 # Cranial intestine vs. stomach
 sel_samples = subset(tmp_ed, Site %in% c("stomach","cranial intestine"))
-sel_samples$Cohort = "Kayisoglu, Hs, Cranial intestine"
+sel_samples$Cohort = "Kayisoglu, Cranial intestine"
 sel_samples$Condition = ifelse(sel_samples$Site == "stomach", "Healthy stomach", "Intestinal/-like")
 
 sel_comps = "Stomach_vs_Cranial"
@@ -154,7 +157,7 @@ data_kayisoglu_cranial = list(emat = tmp[, sel_samples$SampleID], anno = tmp_ann
 
 # Caudal intestine vs. stomach
 sel_samples = subset(tmp_ed, Site %in% c("stomach","caudal intestine"))
-sel_samples$Cohort = "Kayisoglu, Hs, Caudal intestine"
+sel_samples$Cohort = "Kayisoglu, Caudal intestine"
 sel_samples$Condition = ifelse(sel_samples$Site == "stomach", "Healthy stomach", "Intestinal/-like")
 
 sel_comps = "Stomach_vs_Caudal"
@@ -170,7 +173,7 @@ rm(kayisoglu_env, kayisoglu_env_dge)
 
 ```{r}
 thorell_env_dge = new.env()
-load("/data_genome2/public_data/E-MTAB-3689_gastric_inflammation_metaplasia/analysis/DGE-Analysis/Results/2017-11-30/DGE_analysis_image.Rdata", thorell_env_dge)
+load(file.path(data_folder_validation,  "E-MTAB-3689_gastric_inflammation_metaplasia/analysis/DGE-Analysis/Results/2017-11-30/DGE_analysis_image.Rdata"), thorell_env_dge)
 
 tmp_mat = get("count_mat",thorell_env_dge)
 
@@ -190,7 +193,7 @@ tmp_dge = get("all_results", thorell_env_dge)
 
 # Atrophy vs. normal
 sel_samples = subset(tmp_ed, DiseaseStaging %in% c("normal","Atrophy") & !Source.Name %in% c("Gast6","EA6","Atr8")) # exclude 3 outlier samples
-sel_samples$Cohort = "Thorell, Hs, Atrophy"
+sel_samples$Cohort = "Thorell, Atrophy"
 sel_samples$Condition = ifelse(sel_samples$DiseaseStaging == "normal", "Healthy stomach", "Intestinal/-like")
 
 sel_comps = "Atrophy_vs_normal_good_samp"
@@ -199,7 +202,7 @@ data_thorell_atrophy = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[
 
 # Extensive atrophy vs. normal
 sel_samples = subset(tmp_ed, DiseaseStaging %in% c("normal","Extensive atrophy") & !Source.Name %in% c("Gast6","EA6","Atr8"))
-sel_samples$Cohort = "Thorell, Hs, Ext. atrophy"
+sel_samples$Cohort = "Thorell, Ext. atrophy"
 sel_samples$Condition = ifelse(sel_samples$DiseaseStaging == "normal", "Healthy stomach", "Intestinal/-like")
 
 sel_comps = "ExtAtrophy_vs_normal_good_samp"
@@ -216,7 +219,7 @@ rm(thorell_env_dge)
 
 ```{r}
 colon_env_dge = new.env()
-load("/data_genome2/public_data/GSE64392_colon_biobank/analysis/Results/2022-02-24/DGE_analysis_image.Rdata", colon_env_dge)
+load(file.path(data_folder_validation,  "GSE64392_colon_biobank/analysis/Results/2022-02-24/DGE_analysis_image.Rdata"), colon_env_dge)
 
 tmp = get("expr_mat",colon_env_dge)
 
@@ -230,7 +233,7 @@ tmp_anno$TX_ID = tmp_anno$PROBE_ID
 # sample annotation must include sample ID and stomach site
 tmp_ed = get("ed", colon_env_dge)
 colnames(tmp_ed) = gsub("ID","SampleID", colnames(tmp_ed))
-tmp_ed$Cohort = "van de Wetering colon biobank"
+tmp_ed$Cohort = "van de Wetering,Colon"
 sel_samples = tmp_ed
 sel_samples$Condition = ifelse(sel_samples$Organ == "Stomach", "healthy stomach", "intestinal/-like")
 
@@ -241,12 +244,43 @@ rm(tmp_ed, tmp_dge, tmp, tmp_anno, sel_samples, sel_comps)
 rm(colon_env_dge)
 ```
 
+# iPSC CDX2 Knock-in
+
+```{r}
+
+tmp_tab<- readRDS(file.path(data_folder_validation,  "GSE173264_iPSC_CDX2/GSE173264_iPSC_CDX2_mat.rds")) |> as.data.frame()
+
+#tmp_dge = get("all_results", colon_env_dge)
+
+tmp <- as.matrix(tmp_tab[, 3:ncol(tmp_tab)])
+rownames(tmp) <- tmp_tab$`Gene ID`
+
+# probe annotation must include gene symbol, probe ID and optionally a transcript ID
+tmp_anno = tmp_tab[, c("Gene ID", "GeneSymbol")]
+colnames(tmp_anno) = gsub("Gene ID","PROBE_ID",colnames(tmp_anno))
+colnames(tmp_anno) = gsub("GeneSymbol","SYMBOL",colnames(tmp_anno))
+tmp_anno$TX_ID = tmp_anno$PROBE_ID
+
+# sample annotation must include sample ID and stomach site
+tmp_ed = data.frame(SampleID=colnames(tmp))
+tmp_ed$Cohort = "GSE173264, iPSC"
+tmp_ed$Condition = ifelse(grepl("DOX[-_]N$", tmp_ed$SampleID),"healthy stomach", "intestinal/-like")
+sel_samples = tmp_ed
+
+#sel_comps = c("colon_vs_stomach_glands")
+
+data_ipsc = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=sel_samples[, c("SampleID","Condition","Cohort")], dge = NA)
+rm(tmp_ed, tmp, tmp_anno, sel_samples)
+
+```
+
+
 
 # ESGI v2
 
 ```{r}
 esgiv2env_dge = new.env()
-load("../../phenotyping_v2/DGE_analysis_HISAT_featureCounts/Results/2022-03-11/DGE_analysis_image.Rdata", esgiv2env_dge)
+load("../../../../Results/ClonalCultures/RNA/DGE_analysis_image.Rdata", esgiv2env_dge)
 
 # probe annotation must include gene symbol, probe ID and optionally a transcript ID
 tmp_dge = get("all_results", esgiv2env_dge)
@@ -265,7 +299,7 @@ tmp = assay(vst(DESeqDataSetFromMatrix(tmp_mat, colData = tmp_ed[colnames(tmp_ma
 # IM vs. Normal Antrum
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Normal Antrum"))
 sel_samples$Condition = ifelse(sel_samples$Condition == "Normal Antrum", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "ESGIv2 IM vs normal"
+sel_samples$Cohort = "evC IM vs normal"
 
 sel_comps = c("IM_all_vs_NormalAntrum")
 
@@ -274,7 +308,7 @@ data_esgiv2_IM_vs_normal = list(emat = tmp[, sel_samples$SampleID], anno = tmp_a
 # IM vs non-IM, alll patients
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM"))
 sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "B IM vs non-IM"
+sel_samples$Cohort = "evC IM vs non-IM"
 
 sel_comps = c("IM_vs_non-IM_all_samples")
 
@@ -284,7 +318,7 @@ data_esgiv2_IM_vs_nonIM = list(emat = tmp[, sel_samples$SampleID], anno = tmp_an
 # IM vs non-IM, P591
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM") & Patient == "591")
 sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "B IM vs non-IM, P591"
+sel_samples$Cohort = "evC IM vs non-IM, P591"
 
 sel_comps = c("IM_591_vs_NonIM")
 
@@ -293,7 +327,7 @@ data_esgiv2_IM_vs_nonIM_591 = list(emat = tmp[, sel_samples$SampleID], anno = tm
 # IM vs non-IM, P592
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM") & Patient == "592")
 sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "B IM vs non-IM, P592"
+sel_samples$Cohort = "evC IM vs non-IM, P592"
 
 sel_comps = c("IM_592_vs_NonIM")
 
@@ -302,7 +336,7 @@ data_esgiv2_IM_vs_nonIM_592 = list(emat = tmp[, sel_samples$SampleID], anno = tm
 # IM vs non-IM, P594
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM") & Patient == "594")
 sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "B IM vs non-IM, P594"
+sel_samples$Cohort = "evC IM vs non-IM, P594"
 
 sel_comps = c("IM_594_vs_NonIM")
 
@@ -317,7 +351,7 @@ rm(esgiv2env_dge)
 
 ```{r}
 im_china_env_dge = new.env()
-load("../../../../IntestinalMetaplasia_Coop/analysis/RNA/DGE_analysis_HISAT_featureCounts/Results/2021-12-20/DGE_analysis_image.Rdata", im_china_env_dge)
+load("../../../../Results/PolyclonalCultures/RNA/DGE_analysis_image.Rdata", im_china_env_dge)
 
 # probe annotation must include gene symbol, probe ID and optionally a transcript ID
 tmp_dge = get("all_results", im_china_env_dge)
@@ -336,7 +370,7 @@ tmp = assay(vst(DESeqDataSetFromMatrix(tmp_mat, colData = tmp_ed[colnames(tmp_ma
 # IM vs non-IM
 sel_samples = subset(tmp_ed, (is.na(tmp_ed$`Histological diagnosis`) | (tmp_ed$`Histological diagnosis` == "IM")) & Site %in% c("Angular incisisure", "Antrum","Corpus")  & Group %in% c("IM","Non-IM")) 
 sel_samples$Condition = ifelse(sel_samples$Group == "Non-IM", "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "Z IM vs Non-IM"
+sel_samples$Cohort = "evPC IM vs Non-IM"
 
 sel_comps = c("IM_vs_non-IM_all")
 
@@ -345,7 +379,7 @@ data_im_china = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[, c("SY
 # stomach vs. SI
 sel_samples = subset(tmp_ed, (is.na(tmp_ed$`Histological diagnosis`)) & Site %in% c("Antrum","Corpus", "small intestinal") & Group == "Control" ) 
 sel_samples$Condition = ifelse(sel_samples$Site %in% c("Antrum","Corpus"), "healthy stomach", "intestinal/-like")
-sel_samples$Cohort = "Z SI vs Stomach"
+sel_samples$Cohort = "evPC SI vs Stomach"
 
 sel_comps = c("SI_vs_Normal_AC")
 
@@ -359,7 +393,6 @@ rm(im_china_env_dge)
 
 
 ```{r}
-
 all_ds = list(Nookaew = data_nookaew, 
               Companioni = data_companioni, 
               Kayisoglu_caudal = data_kayisoglu_caudal, 
@@ -367,15 +400,15 @@ all_ds = list(Nookaew = data_nookaew,
               Thorell_atrophy = data_thorell_atrophy, 
               Thorell_ext.atrophy = data_thorell_extatrophy,
               VanDeWetering = data_van_de_wetering, 
+              iPSC = data_ipsc,
               ESGIv2_IM_vs_nonIM = data_esgiv2_IM_vs_nonIM, 
-              ESGIv2_IM_vs_nonIM_591 = data_esgiv2_IM_vs_nonIM_591, 
-              ESGIv2_IM_vs_nonIM_592 = data_esgiv2_IM_vs_nonIM_592, 
-              ESGIv2_IM_vs_nonIM_594 = data_esgiv2_IM_vs_nonIM_594, 
-              ESGIv2_IM_vs_normal = data_esgiv2_IM_vs_normal, 
+              # ESGIv2_IM_vs_nonIM_591 = data_esgiv2_IM_vs_nonIM_591, 
+              # ESGIv2_IM_vs_nonIM_592 = data_esgiv2_IM_vs_nonIM_592, 
+              # ESGIv2_IM_vs_nonIM_594 = data_esgiv2_IM_vs_nonIM_594, 
+              # ESGIv2_IM_vs_normal = data_esgiv2_IM_vs_normal, 
               China_IM = data_im_china, 
               China_SIvsStomach = data_si_vs_stomach_china)
 
-
-saveRDS(all_ds, "Joint_datasets.rds")
+saveRDS(all_ds, file.path(data_folder_validation, "Joint_datasets.rds"), compress=T)
 ```
 
