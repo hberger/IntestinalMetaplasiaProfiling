@@ -54,7 +54,7 @@ For each data set we compare Atrophy/IM vs. healthy/control conditions in stomac
 
 
 ```{r}
-all_ds = readRDS("Joint_datasets.rds")
+all_ds = readRDS("../../../../Data/ExtData/Validation_DataSets/Joint_datasets.rds")
 ```
 
 
@@ -97,7 +97,9 @@ condition_levels_ordered = c("Healthy stomach","Intestinal/-like")
 
 combined_tabs$Condition = factor(combined_tabs$Condition, levels=condition_levels_ordered)
 
-combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Hs, Caudal intestine","Kayisoglu, Hs, Cranial intestine","van de Wetering colon biobank","China SI vs Stomach","Nookaew et al.,antrum", "Nookaew et al.,corpus", "Companioni et al.", "Thorell, Hs, Atrophy", "Thorell, Hs, Ext. atrophy","ESGIv2 IM vs normal", "ESGIv2 IM vs non-IM", "ESGIv2 IM vs non-IM, P591", "ESGIv2 IM vs non-IM, P592", "ESGIv2 IM vs non-IM, P594", "China IM vs Non-IM") )
+combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evPC IM vs Non-IM") )
+
+# combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Hs, Caudal intestine","Kayisoglu, Hs, Cranial intestine","van de Wetering colon biobank","China SI vs Stomach","Nookaew et al.,antrum", "Nookaew et al.,corpus", "Companioni et al.", "Thorell, Hs, Atrophy", "Thorell, Hs, Ext. atrophy","ESGIv2 IM vs normal", "ESGIv2 IM vs non-IM", "ESGIv2 IM vs non-IM, P591", "ESGIv2 IM vs non-IM, P592", "ESGIv2 IM vs non-IM, P594", "China IM vs Non-IM") )
 #combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=naturalsort(unique(combined_tabs$Cohort)))
 
 combined_tabs[, mean_stomach:=mean(ifelse(Condition=="Healthy stomach",Expression,NA), na.rm=T), by=c("Cohort","SYMBOL","PROBE_ID")]
