@@ -64,7 +64,9 @@ all_ds = readRDS("../../../../Data/ExtData/Validation_DataSets/Joint_datasets.rd
 
 ```{r}
 #sel_genes = c("GAST","ATP4A","ATP4B","CDX2","SOX2","SIM2","MEIS1","MEIS2","PDX1","GATA3","GATA4","GATA5","IRX2","IRX5","TCF7L1", "TCF7L2", "LEF1")
-sel_genes = c("CDX2","HNF4A", "HNF4G", "SOX2","CDX1", "POU2F1","RUNX2","BPTF","FOXJ1","TCF7L1","TCF7L2","LEF1","TCF7","GFI1","HOXA13","PAX4","HOXA4")
+sel_genes = c("CDX2","HNF4A", "HNF4G", "SOX2","CDX1",
+              "POU2F1","RUNX2","BPTF","FOXJ1","TCF7L1","TCF7L2","LEF1","TCF7",
+              "GFI1","HOXA13","PAX4","HOXA4", "NKX6-3")
 ```
 
 
@@ -97,7 +99,7 @@ condition_levels_ordered = c("Healthy stomach","Intestinal/-like")
 
 combined_tabs$Condition = factor(combined_tabs$Condition, levels=condition_levels_ordered)
 
-combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evPC IM vs Non-IM") )
+combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evC IM vs non-IM 2pat", "evPC IM vs Non-IM") )
 
 # combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Hs, Caudal intestine","Kayisoglu, Hs, Cranial intestine","van de Wetering colon biobank","China SI vs Stomach","Nookaew et al.,antrum", "Nookaew et al.,corpus", "Companioni et al.", "Thorell, Hs, Atrophy", "Thorell, Hs, Ext. atrophy","ESGIv2 IM vs normal", "ESGIv2 IM vs non-IM", "ESGIv2 IM vs non-IM, P591", "ESGIv2 IM vs non-IM, P592", "ESGIv2 IM vs non-IM, P594", "China IM vs Non-IM") )
 #combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=naturalsort(unique(combined_tabs$Cohort)))
@@ -111,7 +113,7 @@ lapply(all_ds, function(x) {ed = x[["sample_description"]]; table(ed$Cohort, ed$
 ```
 
 
-```{r, fig.width=18, fig.height=4}
+```{r, fig.width=18, fig.height=4, eval=FALSE}
 
 for (gg in sel_genes) {
   
@@ -121,7 +123,6 @@ for (gg in sel_genes) {
   print(p)
   
 }
-
 ```
 
 ## Relative to Healthy Stomach
@@ -143,7 +144,8 @@ for (gg in sel_genes) {
     theme(axis.text.x = element_text(angle = 90, hjust = 1), strip.text.x = element_text(hjust=0, size=8, angle=0)) + 
     coord_cartesian(ylim=c(ymin,ymax)) + 
     geom_hline(yintercept = 0, col="grey") + 
-    stat_compare_means(method="t.test", aes(label = paste0(..p.signif..,"\n",..p.format..)), label.y = ymax*0.9, label.x = 1.5) + 
+    stat_compare_means(method="t.test", aes(label = paste0(..p.signif..,"\n",..p.format..)), label.y = ymax*0.9, label.x = 1.5) +
+    #stat_compare_means(method="wilcox.test", aes(label = paste0(..p.signif..,"\n",..p.format..)), label.y = ymax*0.9, label.x = 1.5) + 
     ylab("Expression relative to healthy stomach mean")
   all_plots[[gg]] = p
   print(p)

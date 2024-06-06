@@ -116,7 +116,7 @@ condition_levels_ordered = c("Healthy stomach","Intestinal/-like")
 
 combined_tabs$Condition = factor(combined_tabs$Condition, levels=condition_levels_ordered)
 
-combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evPC IM vs Non-IM") )
+combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evC IM vs non-IM 2pat", "evPC IM vs Non-IM") )
 #combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=naturalsort(unique(combined_tabs$Cohort)))
 
 combined_tabs[, mean_stomach:=mean(ifelse(Condition=="Healthy stomach",Expression,NA), na.rm=T), by=c("Cohort","SYMBOL","PROBE_ID")]

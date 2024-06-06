@@ -54,7 +54,6 @@ For each data set we compare Atrophy/IM vs. healthy/control conditions in stomac
 data_folder_validation <- "../../../../Data/ExtData/Validation_DataSets"
 ```
 
-
 ## Nookaew et al. 
 
 Normalized data was downloaded from GEO and gene annotations were updated based on RefSeq accessions (2016).
@@ -279,6 +278,25 @@ rm(tmp_ed, tmp, tmp_anno, sel_samples)
 # ESGI v2
 
 ```{r}
+get_avg_data <- function(ed, mat) {
+
+  ed$pat_grp <- paste0(ed$Patient, "___", ed$Condition)
+
+  mat <- mat[, ed$SampleID] 
+  mat_avg <- limma::avearrays(mat, ID = ed[colnames(mat), "pat_grp"])
+  gg <- strsplit(colnames(mat_avg), "___")
+  ed_avg <- data.frame(row.names = colnames(mat_avg), 
+                       SampleID = colnames(mat_avg), 
+                       Condition = sapply(gg, `[`, 2) )
+  ed_avg$Cohort <- ed$Cohort[1]
+  
+  return(list(mat = mat_avg, ed = ed_avg))
+  
+}
+```
+
+
+```{r}
 esgiv2env_dge = new.env()
 load("../../../../Results/ClonalCultures/RNA/DGE_analysis_image.Rdata", esgiv2env_dge)
 
@@ -292,10 +310,12 @@ tmp_anno$TX_ID = tmp_anno$PROBE_ID
 # sample annotation must include sample ID and stomach site
 tmp_ed = get("ed", esgiv2env_dge)
 colnames(tmp_ed) = gsub("Library.number","SampleID", colnames(tmp_ed))
+tmp_ed$Patient <- ifelse(tmp_ed$Patient == "na", tmp_ed$Condition, tmp_ed$Patient)
 
 tmp_mat = get("count_mat",esgiv2env_dge)
 tmp = assay(vst(DESeqDataSetFromMatrix(tmp_mat, colData = tmp_ed[colnames(tmp_mat),], design = ~ Condition)))
 
+##########################################################################
 # IM vs. Normal Antrum
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Normal Antrum"))
 sel_samples$Condition = ifelse(sel_samples$Condition == "Normal Antrum", "healthy stomach", "intestinal/-like")
@@ -303,16 +323,35 @@ sel_samples$Cohort = "evC IM vs normal"
 
 sel_comps = c("IM_all_vs_NormalAntrum")
 
-data_esgiv2_IM_vs_normal = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=sel_samples[, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
+#data_esgiv2_IM_vs_normal = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=sel_samples[, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
 
-# IM vs non-IM, alll patients
+tt <- get_avg_data(sel_samples, tmp)
+
+data_esgiv2_IM_vs_normal = list(emat = tt[["mat"]], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=tt[["ed"]][, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
+
+##########################################################################
+# IM vs non-IM, all patients
 sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM"))
 sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
 sel_samples$Cohort = "evC IM vs non-IM"
 
 sel_comps = c("IM_vs_non-IM_all_samples")
 
-data_esgiv2_IM_vs_nonIM = list(emat = tmp[, sel_samples$SampleID], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=sel_samples[, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
+tt <- get_avg_data(sel_samples, tmp)
+
+data_esgiv2_IM_vs_nonIM = list(emat = tt[["mat"]], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=tt[["ed"]][, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
+
+
+# IM vs non-IM, 592+594
+sel_samples = subset(tmp_ed, Condition %in% c("IM","Non-IM") & Patient %in% c("592","594"))
+sel_samples$Condition = ifelse(sel_samples$Condition == "Non-IM", "healthy stomach", "intestinal/-like")
+sel_samples$Cohort = "evC IM vs non-IM 2pat"
+
+sel_comps = c("IM_vs_non-IM_592_594")
+
+tt <- get_avg_data(sel_samples, tmp)
+
+data_esgiv2_IM_vs_nonIM_2pat = list(emat = tt[["mat"]], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=tt[["ed"]][, c("SampleID","Condition","Cohort")], dge = tmp_dge[sel_comps])
 
 
 # IM vs non-IM, P591
@@ -405,7 +444,8 @@ all_ds = list(Nookaew = data_nookaew,
               # ESGIv2_IM_vs_nonIM_591 = data_esgiv2_IM_vs_nonIM_591, 
               # ESGIv2_IM_vs_nonIM_592 = data_esgiv2_IM_vs_nonIM_592, 
               # ESGIv2_IM_vs_nonIM_594 = data_esgiv2_IM_vs_nonIM_594, 
-              # ESGIv2_IM_vs_normal = data_esgiv2_IM_vs_normal, 
+              # ESGIv2_IM_vs_normal = data_esgiv2_IM_vs_normal,
+              ESGIv2_IM_vs_nonIM_2pat = data_esgiv2_IM_vs_nonIM_2pat,
               China_IM = data_im_china, 
               China_SIvsStomach = data_si_vs_stomach_china)
 
