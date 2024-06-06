@@ -166,6 +166,27 @@ par(mar=c(5,10,4,1))
 with(subset(hypo_cpg_592_594, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
 ```
 
+```{r, eval=FALSE, fig.height=5}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+data(Locations)
+i450k_cpgs <- rownames(Locations)
+
+lapply(all_hyper_cpg, function(x) table(x$Row.names %in% i450k_cpgs))
+
+aa <- merge(im_nonim_results, im_nonim_healthy_results, by="Row.names")
+aa1 <- subset(aa, adj.P.Val.y < 0.05 & abs(logFC.y)>0.2)
+plot(aa1$logFC.x, aa1$logFC.y, pch=20, xlab="IM EPIC",ylab="EPIC_Healthy")
+abline(h=0,v=0, lty=2)
+abline(a=0, b=1, col="red")
+
+aa <- merge(im_nonim_healthy_450k_EPIC_results, im_nonim_healthy_results, by="Row.names")
+aa1 <- subset(aa, adj.P.Val.y < 0.05 & abs(logFC.y)>0.2)
+plot(aa1$logFC.x, aa1$logFC.y, pch=20, xlab="450k_and_EPIC",ylab="EPIC_Healthy")
+abline(h=0,v=0, lty=2)
+abline(a=0, b=1, col="red")
+```
+
+
 
 # Export
 

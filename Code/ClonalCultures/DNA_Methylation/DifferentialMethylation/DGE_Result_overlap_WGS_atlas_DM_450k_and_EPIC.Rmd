@@ -44,9 +44,10 @@ cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=po
 # WGS atlas data
 
   - DM sites between Colon and Antrum or SI and Antrum
+  - DM sites betwwen Stomach Body (Corpus) and Stomach Antrum
 
 ```{r}
-all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/ClonalCultures/DNAm/WGS_gut_DM.rds")
+all_results_beta_annotated_wgs <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM.rds")
 
 # wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
 #   x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
