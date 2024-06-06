@@ -312,6 +312,20 @@ res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
 
 all_results[["IM_vs_non-IM_all_samples"]] = res
 
+############################################
+# 592 vs. 594 - IM vs. non-IM clones
+############################################
+
+included_samples = rownames(subset(ed,  Patient %in% c("592","594") & Condition %in% c("IM","Non-IM")))
+
+dds_selected = ddsHisatGE[included_genes, included_samples]
+dds_selected$Condition <- factor(dds_selected$Condition, levels=c("IM","Non-IM"))
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+res <- results(dds_selected, contrast=c("Condition","IM","Non-IM"))
+
+all_results[["IM_vs_non-IM_592_594"]] = res
+
 
 ############################################
 # All IM clones vs. all_normal controls
@@ -340,7 +354,7 @@ dds_selected <- DESeq(dds_selected, fitType="local")
 
 res <- results(dds_selected, contrast=c("Condition","IM","Normal Antrum"))
 
-all_results[["IM_all_vs_NormalAntrum"]] = res
+all_results[["IM_all_vs_GoodNormalAntrum"]] = res
 
 
 
