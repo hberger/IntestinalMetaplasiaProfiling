@@ -82,8 +82,8 @@ tf_hyper
 
 ## TF activitiy overlap from PySCENIC
 
-```{r, fig.height=8}
-load("../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/TF_DE_selected_comparisons.Rdata")
+```{r, fig.height=9}
+load("../../../Data/ExtData/Zhang_scRNA/PySCENIC_with_GCA_downsampled/TF_DE_selected_comparisons.Rdata")
 
 tf_hyper_pyscenic_ovlp <- subset(dge_results_all, GeneSymbol %in% names(tf_hyper))
 
@@ -104,8 +104,6 @@ tf_hypo
 ## TF activitiy overlap from PySCENIC
 
 ```{r, fig.height=8}
-load("../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/TF_DE_selected_comparisons.Rdata")
-
 tf_hypo_pyscenic_ovlp <- subset(dge_results_all, GeneSymbol %in% names(tf_hypo))
 
 ggplot(tf_hypo_pyscenic_ovlp) + geom_bar(stat="identity", aes(x=celltype, y=avg_difference)) + facet_wrap(~GeneSymbol, scales = "free_x") +
