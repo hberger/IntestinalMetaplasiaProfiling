@@ -94,6 +94,8 @@ pheatmap(cc, main="Correlation on probes with beta range > 0.2")
 
 The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015] and the subsetted data set:
 
+ - IM vs non-IM (592+594, replicates averaged) [IMvsNonIM_592_594_avg]
+ - IM vs non-IM (592+594, replicates averaged, paired analysis) [IMvsNonIM_592_594_avg_paired]
  - on per-patient and condition/site average samples, IM vs. Normal (adjusting for stomach site). This is not ideal since there are no Corpus/Fundus IM samples [IMvsNormal]
  - on per-patient and condition/site average samples, IM vs. Normal stomach antrum (since all IM are antrum in this data set) [IMvsNormalAntrum]
  - on per-patient and condition/site average samples, non-IM vs. Normal (adjusting for stomach site). This is not ideal since the distribution of sites in Non-IM and normal samples is not necessarily the same [nonIMvsNormal]
@@ -109,13 +111,8 @@ The following comparisons are going to be performed using limma [Ritchie ME, *et
   
 This is done for IM [IMvsNormal_site.adj] and for non-IM samples [nonIMvsNormal_site.adj]. 
 
-
-```{r Differential Methylation Analysis}
-
+```{r}
 if(rerun_DGE) {
-  
-  all_results_betas = list()
-  
   data_matrix = myNorm_sub
   ed = myLoad$pd
   normal_samples <- subset(ed, Sample_Group == "Normal")
@@ -132,6 +129,45 @@ if(rerun_DGE) {
                    group = sapply(tmp, `[`, 2),
                    site = sapply(tmp, `[`, 3) )
   ed2$site_ac <- ifelse(ed2$site == "Antrum/Corpus", "Corpus", ed2$site)
+}
+```
+
+```{r}
+cc <- cor(avg_combined, method="spearman")
+#rownames(cc) <- paste0(ed[rownames(cc), "PatientID"], "_", ed[rownames(cc), "Sample_Group"])
+pheatmap(cc, main="Correlation on probes with beta range > 0.2")
+```
+
+```{r Differential Methylation Analysis}
+
+if(rerun_DGE) {
+  
+  all_results_betas = list()
+  
+  # IM vs. non-IM, patients 592 and 594, replicates averaged
+  sel_conditions = c("IM","non-IM")
+  sel_samples = rownames(subset(ed2, group %in% sel_conditions & patient %in% c("592","594")))
+  edata = avg_combined[,sel_samples]
+  groups = factor(ed2[sel_samples,]$group)
+  design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata, design)
+  fit <- eBayes(fit)
+  all_results_betas[["IMvsNonIM_592_594_avg"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+
+  # IM vs. non-IM, patients 592 and 594, replicates averaged, paired analysis of IM-nonIM
+  adj_betas <- list()
+  ## paired comparison
+  for( s in c("592","594")) {
+    im = subset(ed2, patient == s & group == "IM") |> rownames()
+    nonim = subset(ed2, patient == s & group == "non-IM") |> rownames()
+    adj_betas[[s]] <- avg_combined[, im] - avg_combined[, nonim]
+  }
+  target_to_normal_diff <- do.call(cbind, adj_betas)
+  
+  fit <- lmFit(target_to_normal_diff)
+  fit <- eBayes(fit)
+  all_results_betas[["IMvsNonIM_592_594_avg_paired"]] = topTable(fit, coef="x1", adjust="BH", number=nrow(edata))
   
   # IM vs. Normal, adjusting for site
   sel_conditions = c("IM","Normal")
@@ -152,7 +188,6 @@ if(rerun_DGE) {
   sel_samples = rownames(subset(ed2, group %in% sel_conditions & site == "Antrum") )
   edata = avg_combined[,sel_samples]
   groups = factor(ed2[sel_samples,]$group)
-  site = factor(ed2[sel_samples,]$site_ac)
   
   design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
   
