@@ -25,6 +25,7 @@ library(knitr)
 library(scales)
 library(fgsea)
 library(data.table)
+library(ggpubr)
 
 result_folder = "../../../../Results/ClonalCultures/RNA/"
 if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
@@ -35,6 +36,12 @@ if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
 load(file.path(result_folder, "DGE_analysis_image.Rdata") )
 norm_counts = read.table(file.path(result_folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
 colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+
+ed$Condition = ifelse(ed$Condition == "Normal Antrum", ifelse(ed$Library.Name %in% c("HGAT-26A-1", "HGAT-29A-2"), "Normal Antrum", "Normal Antrum 2"), ed$Condition)
+
+ed$Patient <- ifelse(ed$Patient == "na", ed$Condition, ed$Patient)
+ed$Patient_and_Condition <- paste0(ed$Patient, "_", ed$Condition)
+
 ```
 
 ```{r, message=FALSE, warning=FALSE, results='hide'}
@@ -42,20 +49,34 @@ gsea_gmt_file = "../../../../Data/ExtData/genesets/MSigDB/msigdb_v2023.2.Hs_GMTs
 gsets <- gmtPathways(gsea_gmt_file)
 ```
 
-# Known IM/intestinal markers
+# Known IM/intestinal markersi
+
+## FPKM
+
+TACSTD2 = TROP2
 
 ```{r, fig.width=10, fig.height=6}
-sel_genes = c("GKN1","GKN2","PGC","MUC5AC","MUC6","TFF3","VIL1","CDX1","CDX2","ISX", "MUC2", "SPINK4","ITLN1","TFF2","DEFA5", "TFF1", "REG4", "LRIG1", "OLFM4")
+sel_genes = c("GKN1","GKN2","PGC","MUC5AC","MUC6","TFF3","VIL1","CDX1","CDX2","ISX", "MUC2", "SPINK4","ITLN1","TFF2", "TFF1", "REG4", "LRIG1", "OLFM4","SOX2", "AQP5","CD44","TACSTD2","IRX2")
 
 sel_samples = paste0("X",ed$Library.number)
-nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
-nc_mat_selected = as.matrix(nc_selected[,sel_samples])
-nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
-rownames(nc_mat_selected) = nc_selected$GeneSymbol
+#nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+#nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+#nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+#rownames(nc_mat_selected) = nc_selected$GeneSymbol
+nc_mat_selected <- fpkm_mat[subset(gene_anno, GeneSymbol %in% sel_genes)$Geneid,]
+rownames(nc_mat_selected) <- gene_anno[rownames(nc_mat_selected), "GeneSymbol"]
+colnames(nc_mat_selected) <- paste0("X", colnames(nc_mat_selected))
 col_anno = ed[, c("Condition","Patient")]
 rownames(col_anno) = paste0("X", ed$Library.number)
 breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
-pheatmap(nc_mat_selected, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"])
+pheatmap(nc_mat_selected, 
+         scale="row", 
+         main="Known IM markers" , 
+         annotation_col = col_anno, 
+         breaks=breaks_new, 
+         cluster_rows = T,
+         clustering_distance_rows = "euclidean",
+         labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"])
 
 ```
 
@@ -65,8 +86,55 @@ colnames(dd) = c("gene","sample", "expression")
 dd$sample = gsub("^X","", dd$sample)
 dd = as.data.table(merge(dd, ed[, c("Library.number","Patient","Condition")], by.x="sample", by.y="Library.number"))
 
-ggplot(dd, aes(x=gene, fill=Condition, y=expression)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) 
+ggplot(dd, aes(x=gene, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + scale_y_log10()
+
+ggplot(dd, aes(x=Condition, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + facet_wrap(~gene, scales = "free_y")
+
+
 ```
+
+```{r, fig.width=12}
+cond_order = c("Normal Antrum","Non-IM","IM","Duodenum","Colon")
+sel_genes_2 = c("SOX2","TFF1","TFF2","GKN1","MUC5AC","CDX2","HNF4A","VIL1","CD44","AQP5")
+nc_mat_selected <- fpkm_mat[subset(gene_anno, GeneSymbol %in% sel_genes_2)$Geneid,]
+rownames(nc_mat_selected) <- gene_anno[rownames(nc_mat_selected), "GeneSymbol"]
+
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd$sample = gsub("^X","", dd$sample)
+dd = as.data.table(merge(dd, ed[, c("Library.number","Patient","Condition")], by.x="sample", by.y="Library.number"))
+
+dd1 <- subset(dd, gene %in% sel_genes_2 & Condition != "Normal Antrum 2")
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="FPKM")
+```
+
+
+```{r, fig.width=12}
+mat_avg <- limma::avearrays(nc_mat_selected, ID = ed[colnames(nc_mat_selected), "Patient_and_Condition"])
+
+dd = reshape2::melt(mat_avg)
+colnames(dd) = c("gene","sample", "expression")
+dd <- as.data.table(dd)
+dd[, Condition:=unlist(sapply(strsplit(as.character(sample), "_"), `[`,2))]
+
+dd1 <- subset(dd, gene %in% sel_genes_2 & Condition != "Normal Antrum 2")
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="FPKM")
+```
+
 
 ```{r, fig.width=16}
 dd = reshape2::melt(nc_mat_selected)
@@ -134,560 +202,184 @@ dev.off()
 
 ```
 
-<!-- # Selected tissue specific, SC and IM-related gene sets -->
-
-
-<!-- The following gene sets are used for visualizations: -->
 
-<!-- - Munoz et al Small Intestinal Stem Cell Signature (PMID: 22692129, DOI: 10.1038/emboj.2012.166, Supp Table S3 ) -->
-<!-- - Mallon et al StemCellDB (PMID: 23117585) -->
-<!-- - Herbst et al Beta-catenine target genes (PMID: 24467841) -->
-<!-- - Palmer et al 'Pluripotency' Signature (PMID: 22909066, DOI: doi: 10.1186/gb-2012-13-8-r71). The modules defined by Palmer et al are as follows -->
-<!--       - 1 - DNA replication / cell cycle module -->
-<!--       - 2 - RNA transcription / protein synthesis module -->
-<!--       - 3 - metabolism / hormone signaling / protein synthesis module -->
-<!--       - 4 - multicellular signaling / immune signaling / cell identity module -->
-<!-- - Colon vs. Stomach signature (generated by using data from colon biobank normal tissues [van Wetering et al., PMID: 25957691] and gastric glands [Bartfeld et al ,PMID: 25307862]; see /data/public_data/GSE64392_colon_biobank/ for details ) -->
-<!-- - IM vs healthy signature (strongly up- or downregulated genes in complete and incomplete IM vs healthy control using GE data published by Companioni O 2017 PlosOne [doi: 10.1371/journal.pone.0176043]; see /data_genome2/public_data/GSE78523_IM_GC for details) -->
-<!-- - Gut tissue specific gene sets derived from Protein Atlas (proteinatlas.org) tissue specific gene lists. Those consist of tissue enriched (>5 fold higher mRNA compared to all other tissues), group enriched (>5 fold higher mRNA in 2-7 tissues compared to rest) and tissue enhanced (>5 fold higher mRNA to average in rest). We only include *tissue enriched* and *group enriched* genes. -->
+## VST transformed values
 
-
-<!-- ```{r} -->
-<!-- # Missing GS: - Barker et al Antral Stem Cell Signature (PMID: 20085740, DOI: 10.1016/j.stem.2009.11.013 ) MOUSE -->
-<!-- known_genes = unique(all_results[[1]]$GeneSymbol) -->
-
-<!-- intestinal_sc_sets = gmtPathways("/data_genome1/References/GeneSets/LGR5_StemCellSignature/SC_and_CryptCell_Signatures_human.gmt" ) -->
-<!-- all_gene_sets = list() -->
-<!-- all_gene_sets[["Lgr5_SC_Signature_Munoz"]] = intestinal_sc_sets[["Lgr5_SC_Signature_Munoz"]] -->
-
-<!-- beta_cat_genes = read.xlsx("/data_genome1/References/GeneSets/LGR5_StemCellSignature/Wnt target H2014 list.xls", sheetIndex = 1, header=F, stringsAsFactors=F) -->
-<!-- all_gene_sets[["Herbst_et_al_Beta_catenin_targets"]] = beta_cat_genes$X1 -->
-
-<!-- # Palmer SC signature -->
-<!-- palmer_sc_sig = read.table("/data_genome1/References/GeneSets/StemCell_Signature_Palmer_et_al_2012.txt", sep="\t", header=T, stringsAsFactors = F) -->
-
-<!-- for (i in c(1:4)) { -->
-<!--   all_gene_sets[[paste("Palmer_SC_signature_Module_",i)]] = unique(subset(palmer_sc_sig, Modul==i)$GeneSymbol) -->
-<!-- } -->
+TACSTD2 = TROP2
 
-<!-- # StemCellDB (Mallon et al) -->
-<!-- mallon_sc_sig = read.table("/data_genome1/References/GeneSets/Pluripotency Signature Mallon StemCellDB.csv", sep="\t", header=T, stringsAsFactors = F) -->
-<!-- tmp = unique(mallon_sc_sig$Gene) -->
-<!-- all_gene_sets[["StemCellDB_signature_Mallon"]] = tmp[tmp!=""] -->
-
-
-<!-- # Colon vs. Stomach signature -->
-<!-- colon_sig_tmp = read.table("/data/public_data/GSE64392_colon_biobank/analysis/Results/2016-08-22/Differential_expression_results_colon_vs_stomach_glands.txt", sep="\t", header=T, stringsAsFactors = F)  -->
-<!-- all_gene_sets[["Colon_vs_Stomach_up"]] = subset(colon_sig_tmp, logFC > 1 & adj.P.Val < 0.05)$SYMBOL -->
-<!-- all_gene_sets[["Colon_vs_Stomach_down"]] = subset(colon_sig_tmp, logFC < -1 & adj.P.Val < 0.05)$SYMBOL -->
-
-<!-- tmp = read.table("/data_genome2/public_data/GSE78523_IM_GC/IM_signature_genes_Companioni.txt", sep="\t", header=T) -->
-<!-- all_gene_sets[["IM_vs_healthy_Companioni"]] = as.character(tmp$gene) -->
-
-<!-- tmp = read.table("/data_genome2/public_data/GSE78523_IM_GC/Healthy_vs_IM_signature_genes_Companioni.txt", sep="\t", header=T) -->
-<!-- all_gene_sets[["Healthy_vs_IM_Companioni"]] = as.character(tmp$gene) -->
-
-<!-- tissues = c("colon","duodenum","esophagus","liver","pancreas","small","stomach") -->
-<!-- for (tt in tissues) { -->
-<!--   ifile = paste("/data_genome2/References/Protein_Atlas/Tissue_specific_genes/tissue_specificity_rna_",tt,"_.tsv.gz", sep="") -->
-<!--   tmp = read.table(gzfile(ifile), sep="\t", header=T, stringsAsFactors = F, quote='', comment.char="") -->
-<!--   all_gene_sets[[paste("Tissue_specific_genes_",tt, sep="")]] = subset(tmp, RNA.tissue.category %in% c("Tissue enriched","Group enriched"))$Gene -->
-<!-- } -->
-
-
-<!-- ``` -->
-
-<!-- ```{r, fig.height=8, fig.width=12} -->
-<!-- selected_gene_sets = names(all_gene_sets) -->
-
-<!-- for (g in selected_gene_sets) { -->
-<!--   gs = all_gene_sets[[g]] -->
-<!--   sel_samples = paste0("X",ed$Library.number) -->
-<!--   nc_selected = subset(norm_counts, GeneSymbol %in% gs ) -->
-<!--   nc_mat_selected = as.matrix(nc_selected[,sel_samples]) -->
-<!--   nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) -->
-<!--   rownames(nc_mat_selected) = nc_selected$GeneSymbol -->
-<!--   col_anno = ed[, c("Condition","Patient")] -->
-<!--   rownames(col_anno) = paste0("X", ed$Library.number) -->
-<!--   breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10) -->
-<!--   pheatmap(nc_mat_selected, scale="row", main=g , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"]) -->
-<!-- } -->
-<!-- ``` -->
-
-<!-- <!-- # Wnt pathway/target gene sets --> -->
-
-<!-- <!-- ```{r, fig.height=8} --> -->
-<!-- <!-- selected_gene_sets = c("HALLMARK_WNT_BETA_CATENIN_SIGNALING", "WNT_UP.V1_DN", "WNT_UP.V1_UP", "KEGG_WNT_SIGNALING_PATHWAY") --> -->
-
-<!-- <!-- for (g in selected_gene_sets) { --> -->
-<!-- <!--   gs = gsets[[g]] --> -->
-<!-- <!--   sel_samples = paste0("X",ed$Library.number) --> -->
-<!-- <!--   nc_selected = subset(norm_counts, GeneSymbol %in% gs ) --> -->
-<!-- <!--   nc_mat_selected = as.matrix(nc_selected[,sel_samples]) --> -->
-<!-- <!--   nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) --> -->
-<!-- <!--   rownames(nc_mat_selected) = nc_selected$GeneSymbol --> -->
-<!-- <!--   col_anno = ed[, c("Condition","Patient")] --> -->
-<!-- <!--   rownames(col_anno) = paste0("X", ed$Library.number) --> -->
-<!-- <!--   breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10) --> -->
-<!-- <!--   pheatmap(nc_mat_selected, scale="row", main=g , annotation_col = col_anno, breaks=breaks_new) --> -->
-<!-- <!-- } --> -->
-<!-- <!-- ``` --> -->
-
-<!-- <!-- ## Only differentially expressed genes --> -->
-
-<!-- <!-- We define differentially expressed genes as those with FDR < 5% and |logFC| > 1 in at least one of the comparisons of Wnt-independent clones to NI control. --> -->
-
-
-<!-- <!-- ```{r, fig.height=8} --> -->
-<!-- <!-- dge_genes = c() --> -->
-<!-- <!-- sel_comparisons = c("WI_Clone1_vs_uninfected", "WI_Clone2_vs_uninfected","WI_Clone3_vs_uninfected") --> -->
-<!-- <!-- for (cc in sel_comparisons) { --> -->
-<!-- <!--   tmp = subset(all_results[[cc]], padj < 0.05 & abs(log2FoldChange) > 1 )$GeneSymbol --> -->
-<!-- <!--   dge_genes = c(dge_genes, tmp) --> -->
-<!-- <!-- } --> -->
-
-<!-- <!-- dge_genes = unique(dge_genes) --> -->
-
-<!-- <!-- selected_gene_sets = c("HALLMARK_WNT_BETA_CATENIN_SIGNALING", "WNT_UP.V1_DN", "WNT_UP.V1_UP", "KEGG_WNT_SIGNALING_PATHWAY") --> -->
-
-<!-- <!-- for (g in selected_gene_sets) { --> -->
-<!-- <!--   gs = gsets[[g]] --> -->
-<!-- <!--   sel_samples = colnames(norm_counts)[grepl("X2534", colnames(norm_counts))] --> -->
-<!-- <!--   norm_counts$symbol_human = mouse_to_human[norm_counts$GeneSymbol, "symbol_1"] --> -->
-<!-- <!--   nc_selected = subset(norm_counts, symbol_human %in% gs & GeneSymbol %in% dge_genes ) --> -->
-<!-- <!--   nc_mat_selected = as.matrix(nc_selected[,sel_samples]) --> -->
-<!-- <!--   nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) --> -->
-<!-- <!--   rownames(nc_mat_selected) = nc_selected$symbol_human --> -->
-<!-- <!--   pheatmap(nc_mat_selected, scale="row", main=g ) --> -->
-<!-- <!-- } --> -->
-<!-- <!-- ``` --> -->
-
-
-<!-- # Selected genes associated with IM -->
-
-<!-- ## Multi Dimensional Scaling -->
-
-<!-- Here we select only the genes determined as differentially expressed and up-regulated between IM and healthy stomach epithelia in the study of Companioni et al.  -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- sel_genes = unique(all_gene_sets[["IM_vs_healthy_Companioni"]]) -->
-<!-- cp = palette(rainbow(3)) -->
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- tmp = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- tmp = subset(tmp, !Geneid == "ENSG00000184040") -->
-<!-- tmp2 = as.matrix(tmp[,sel_samples]) -->
-<!-- rownames(tmp2) = tmp$GeneSymbol -->
-<!-- data_inp = t(log10(tmp2 +1)) -->
-<!-- rownames(data_inp) = gsub("^X","", rownames(data_inp)) -->
-
-<!-- d <- dist(data_inp) # euclidean distances between the rows -->
-<!-- fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim -->
-
-<!-- # plot solution -->
-<!-- x <- fit$points[,1] -->
-<!-- y <- fit$points[,2] -->
-<!-- gg = factor(ed[rownames(data_inp),]$Condition) -->
-<!-- plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(gg)]) -->
-<!-- legend("bottomleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- abline(v=0, lwd=2, col="brown") -->
-<!-- # IM: all done by GVF, non-IM clones: all done by SML -->
-<!-- # plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- # text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))]) -->
-<!-- ``` -->
-
-
-<!-- ## PCA -->
-
-<!-- ```{r, PCA,  fig.width=8, fig.height=8} -->
-<!-- ## Primary Component Analysis on normalized data after adjusting for patient effect -->
-<!-- norm_exp = data_inp -->
-<!-- NA_cols = apply(norm_exp,2,function(x) sum(is.na(x))) -->
-<!-- pca = prcomp(norm_exp[,NA_cols==0]) -->
-<!-- #pca = prcomp(t(normalized$E), na.action=na.omit) -->
-<!-- plot(pca$x[,1],pca$x[,2],type="p", xlab="1st principal component",ylab="2nd principal component", main="PCA on normalized expression data", pch=20) -->
-<!-- gg = as.factor(ed[rownames(norm_exp),]$Condition) -->
-<!-- cp = palette(rainbow(length(levels(gg)))) -->
-
-<!-- text(pca$x[,1],pca$x[,2],labels=ed[rownames(norm_exp),]$Library.number, col=cp[as.numeric(gg)], cex=0.7, adj =-0.1) -->
-<!-- abline(h=0, v=0) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- ### Gene weights -->
-
-<!-- ```{r, fig.width=16} -->
-<!-- weights = pca$rotation[, 1:3] -->
-<!-- weights = weights[order(weights[, "PC1"]),] -->
-<!-- barplot(weights[,"PC1"], las=2, ylab="PC1 weight", main="PC 1 weights for each gene") -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with IM -->
-
-<!-- ```{r} -->
-<!-- head(weights,20) -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with non-IM -->
-
-<!-- ```{r} -->
-<!-- tail(weights, 20) -->
-<!-- ``` -->
-
-<!-- #### 1st PC per sample -->
-
-<!-- ```{r, fig.width=14} -->
-<!-- tmp = pca$x[,1] -->
-<!-- tmp = sort(tmp) -->
-<!-- gg = as.factor(ed[names(tmp), "Condition"]) -->
-<!-- par(mar=c(8,4,4,1)) -->
-<!-- barplot(tmp, las=2, col=as.numeric(gg), ylab="1st PC", names.arg = ed[names(tmp),"Library.Name"]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- # Selected genes associated with non-IM status -->
-<!-- ## Multi Dimensional Scaling -->
-
-<!-- Here we select only the genes determined as differentially expressed and down-regulated between IM and healthy stomach epithelia in the study of Companioni et al.  -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- sel_genes = unique(all_gene_sets[["Healthy_vs_IM_Companioni"]]) -->
-<!-- cp = palette(rainbow(3)) -->
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- tmp = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- tmp = subset(tmp, !Geneid == "ENSG00000184040") -->
-<!-- tmp2 = as.matrix(tmp[,sel_samples]) -->
-<!-- rownames(tmp2) = tmp$GeneSymbol -->
-<!-- data_inp = t(log10(tmp2 +1)) -->
-<!-- rownames(data_inp) = gsub("^X","", rownames(data_inp)) -->
-
-<!-- d <- dist(data_inp) # euclidean distances between the rows -->
-<!-- fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim -->
-
-<!-- # plot solution -->
-<!-- x <- fit$points[,1] -->
-<!-- y <- fit$points[,2] -->
-<!-- gg = factor(ed[rownames(data_inp),]$Condition) -->
-<!-- plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(gg)]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- abline(v=0, lwd=2, col="brown") -->
-<!-- # IM: all done by GVF, non-IM clones: all done by SML -->
-<!-- # plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- # text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))]) -->
-<!-- ``` -->
-
-
-<!-- ## PCA -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- ## Primary Component Analysis on normalized data after adjusting for patient effect -->
-<!-- norm_exp = data_inp -->
-<!-- NA_cols = apply(norm_exp,2,function(x) sum(is.na(x))) -->
-<!-- pca = prcomp(norm_exp[,NA_cols==0]) -->
-<!-- #pca = prcomp(t(normalized$E), na.action=na.omit) -->
-
-<!-- gg = as.factor(ed[rownames(norm_exp),]$Condition) -->
-<!-- cp = palette(rainbow(length(levels(gg)))) -->
-
-<!-- plot(pca$x[,1],pca$x[,2],type="p", xlab="1st principal component",ylab="2nd principal component", main="PCA on normalized expression data", pch=20) -->
-<!-- text(pca$x[,1],pca$x[,2],labels=ed[rownames(norm_exp),]$Library.Name, col=cp[as.numeric(gg)], cex=0.7, adj =-0.1) -->
-<!-- abline(h=0, v=0) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- ### Gene weights -->
-
-<!-- ```{r, fig.width=16} -->
-<!-- weights = pca$rotation[, 1:3] -->
-<!-- weights = weights[order(weights[, "PC1"]),] -->
-<!-- barplot(weights[,"PC1"], las=2, ylab="PC1 weight", main="PC 1 weights for each gene") -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with IM -->
-
-<!-- ```{r} -->
-<!-- head(weights,20) -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with non-IM -->
-
-<!-- ```{r} -->
-<!-- tail(weights, 20) -->
-<!-- ``` -->
-
-<!-- #### 1st PC per sample -->
-
-<!-- ```{r, fig.width=14} -->
-<!-- tmp = pca$x[,1] -->
-<!-- tmp = sort(tmp) -->
-<!-- gg = as.factor(ed[names(tmp), "Condition"]) -->
-<!-- par(mar=c(8,4,4,1)) -->
-<!-- barplot(tmp, las=2, col=as.numeric(gg), ylab="1st PC", names.arg = ed[names(tmp),"Library.Name"]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- # Selected genes associated with IM and non-IM -->
-
-<!-- ## Multi Dimensional Scaling -->
-
-<!-- Here we select only the genes determined as differentially expressed and up- and down-regulated between IM and healthy stomach epithelia in the study of Companioni et al.  -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- companioni_up_and_down = data.frame(GeneSymbol = c(all_gene_sets[["IM_vs_healthy_Companioni"]], all_gene_sets[["Healthy_vs_IM_Companioni"]]),  -->
-<!--                                     group = c(rep("IM", length(all_gene_sets[["IM_vs_healthy_Companioni"]])), rep("non-IM", length(all_gene_sets[["Healthy_vs_IM_Companioni"]]))), stringsAsFactors = F) -->
-<!-- rownames(companioni_up_and_down) = companioni_up_and_down$GeneSymbol -->
-
-<!-- sel_genes = unique(companioni_up_and_down$GeneSymbol) -->
-<!-- cp = palette(rainbow(3)) -->
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- tmp = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- tmp = subset(tmp, !Geneid == "ENSG00000184040") -->
-<!-- tmp2 = as.matrix(tmp[,sel_samples]) -->
-<!-- rownames(tmp2) = tmp$GeneSymbol -->
-<!-- data_inp = t(log10(tmp2 +1)) -->
-<!-- rownames(data_inp) = gsub("^X","", rownames(data_inp)) -->
-
-<!-- d <- dist(data_inp) # euclidean distances between the rows -->
-<!-- fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim -->
-
-<!-- # plot solution -->
-<!-- x <- fit$points[,1] -->
-<!-- y <- fit$points[,2] -->
-<!-- gg = factor(ed[rownames(data_inp),]$Condition) -->
-<!-- plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(gg)]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- abline(v=0, lwd=2, col="brown") -->
-<!-- # IM: all done by GVF, non-IM clones: all done by SML -->
-<!-- # plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- # text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))]) -->
-<!-- ``` -->
-
-
-<!-- ## PCA -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- ## Primary Component Analysis on normalized data after adjusting for patient effect -->
-<!-- norm_exp = data_inp -->
-<!-- NA_cols = apply(norm_exp,2,function(x) sum(is.na(x))) -->
-<!-- pca = prcomp(norm_exp[,NA_cols==0]) -->
-<!-- #pca = prcomp(t(normalized$E), na.action=na.omit) -->
-<!-- plot(pca$x[,1],pca$x[,2],type="p", xlab="1st principal component",ylab="2nd principal component", main="PCA on normalized expression data", pch=20) -->
-<!-- gg = as.factor(ed[rownames(norm_exp),]$Condition) -->
-<!-- cp = palette(rainbow(length(levels(gg)))) -->
-
-<!-- text(pca$x[,1],pca$x[,2],labels=ed[rownames(norm_exp),]$Library.number, col=cp[as.numeric(gg)], cex=0.7, adj =-0.1) -->
-<!-- abline(h=0, v=0) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- ### Gene weights -->
-
-<!-- ```{r, fig.width=16} -->
-<!-- weights = pca$rotation[, 1:3] -->
-<!-- weights = weights[order(weights[, "PC1"]),] -->
-<!-- barplot(weights[,"PC1"], las=2, ylab="PC1 weight", main="PC 1 weights for each gene", col = ifelse(companioni_up_and_down[rownames(weights),"group"]=="IM","red","green"), border = NA) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- boxplot(weights[,"PC1"] ~ factor(companioni_up_and_down[rownames(weights),"group"])) -->
-<!-- abline(h=0, lty=2) -->
-<!-- ``` -->
-
-
-<!-- #### Genes most associated with IM -->
-
-<!-- ```{r} -->
-<!-- head(weights,20) -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with non-IM -->
-
-<!-- ```{r} -->
-<!-- tail(weights, 20) -->
-<!-- ``` -->
-
-<!-- #### 1st PC per sample -->
-
-<!-- ```{r, fig.width=14} -->
-<!-- tmp = pca$x[,1] -->
-<!-- tmp = sort(tmp) -->
-<!-- gg = as.factor(ed[names(tmp), "Condition"]) -->
-<!-- par(mar=c(8,4,4,1)) -->
-<!-- barplot(tmp, las=2, col=as.numeric(gg), ylab="1st PC", names.arg = ed[names(tmp),"Library.Name"]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-
-<!-- ```{r, fig.width=14, fig.height=8} -->
-<!-- top_IM = rownames(head(weights,20)) -->
-<!-- top_nonIM = rownames(tail(weights,20)) -->
-
-<!-- sel_genes = c(top_IM, top_nonIM, "CDX2","MUC2") -->
-
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- nc_mat_selected = as.matrix(nc_selected[,sel_samples]) -->
-<!-- nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) -->
-<!-- rownames(nc_mat_selected) = nc_selected$GeneSymbol -->
-<!-- col_anno = ed[, c("Condition","Patient")] -->
-<!-- rownames(col_anno) = paste0("X", ed$Library.number) -->
-<!-- breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10) -->
-<!-- pheatmap(nc_mat_selected, scale="row", main="Top20 associated with IM and non-IM" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"]) -->
-
-<!-- ``` -->
-
-
-<!-- # Selected genes associated with Colon vs. Stomach -->
-
-<!-- ## Multi Dimensional Scaling -->
-
-<!-- Here we select only the genes determined as differentially expressed and up-regulated between IM and healthy stomach epithelia in the study of Companioni et al.  -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-
-<!-- colon_vs_stomach_up_and_down = unique(data.frame(GeneSymbol = c(all_gene_sets[["Colon_vs_Stomach_up"]], all_gene_sets[["Colon_vs_Stomach_down"]]),  -->
-<!--                                     group = c(rep("Colon", length(all_gene_sets[["Colon_vs_Stomach_up"]])), rep("Stomach", length(all_gene_sets[["Colon_vs_Stomach_down"]]))), stringsAsFactors = F)) -->
-<!-- rownames(colon_vs_stomach_up_and_down) = colon_vs_stomach_up_and_down$GeneSymbol -->
-
-<!-- sel_genes = unique(colon_vs_stomach_up_and_down$GeneSymbol) -->
-
-<!-- cp = palette(rainbow(3)) -->
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- tmp = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- tmp = subset(tmp, !Geneid == "ENSG00000184040") -->
-<!-- tmp2 = as.matrix(tmp[,sel_samples]) -->
-<!-- rownames(tmp2) = tmp$GeneSymbol -->
-<!-- data_inp = t(log10(tmp2 +1)) -->
-<!-- rownames(data_inp) = gsub("^X","", rownames(data_inp)) -->
-
-<!-- d <- dist(data_inp) # euclidean distances between the rows -->
-<!-- fit <- cmdscale(d,eig=TRUE, k=2) # k is the number of dim -->
-
-<!-- # plot solution -->
-<!-- x <- fit$points[,1] -->
-<!-- y <- fit$points[,2] -->
-<!-- gg = factor(ed[rownames(data_inp),]$Condition) -->
-<!-- plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(gg)]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- abline(v=0, lwd=2, col="brown") -->
-<!-- # IM: all done by GVF, non-IM clones: all done by SML -->
-<!-- # plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", main="Metric MDS, all samples", type="n") -->
-<!-- # text(x,y,labels=ed[rownames(data_inp),]$Library.Name, col=cp[as.numeric(factor(ed[rownames(data_inp),]$CulturedBy))]) -->
-<!-- ``` -->
-
-
-<!-- ## PCA -->
-
-<!-- ```{r, fig.width=8, fig.height=8} -->
-<!-- ## Primary Component Analysis on normalized data after adjusting for patient effect -->
-<!-- norm_exp = data_inp -->
-<!-- NA_cols = apply(norm_exp,2,function(x) sum(is.na(x))) -->
-<!-- pca = prcomp(norm_exp[,NA_cols==0]) -->
-<!-- #pca = prcomp(t(normalized$E), na.action=na.omit) -->
-<!-- plot(pca$x[,1],pca$x[,2],type="p", xlab="1st principal component",ylab="2nd principal component", main="PCA on normalized expression data", pch=20) -->
-<!-- gg = as.factor(ed[rownames(norm_exp),]$Condition) -->
-<!-- cp = palette(rainbow(length(levels(gg)))) -->
-
-<!-- text(pca$x[,1],pca$x[,2],labels=ed[rownames(norm_exp),]$Library.Name, col=cp[as.numeric(gg)], cex=0.7, adj =-0.1) -->
-<!-- abline(h=0, v=0) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-<!-- ### Gene weights -->
-
-<!-- ```{r, fig.width=16} -->
-<!-- weights = pca$rotation[, 1:3] -->
-<!-- weights = weights[order(weights[, "PC1"]),] -->
-<!-- barplot(weights[,"PC1"], las=2, ylab="PC1 weight", main="PC 1 weights for each gene", border = NA) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- boxplot(weights[,"PC1"] ~ factor(companioni_up_and_down[rownames(weights),"group"])) -->
-<!-- abline(h=0, lty=2) -->
-<!-- ``` -->
-
-
-<!-- #### Genes most associated with IM -->
-
-<!-- ```{r} -->
-<!-- head(weights,20) -->
-<!-- ``` -->
-
-<!-- #### Genes most associated with non-IM -->
-
-<!-- ```{r} -->
-<!-- tail(weights, 20) -->
-<!-- ``` -->
-
-<!-- #### 1st PC per sample -->
-
-<!-- ```{r, fig.width=14} -->
-<!-- tmp = pca$x[,1] -->
-<!-- tmp = sort(tmp) -->
-<!-- gg = as.factor(ed[names(tmp), "Condition"]) -->
-<!-- par(mar=c(8,4,4,1)) -->
-<!-- barplot(tmp, las=2, col=as.numeric(gg), ylab="1st PC", names.arg = ed[names(tmp),"Library.Name"]) -->
-<!-- legend("topleft", legend=levels(gg), fill=cp[1:length(levels(gg))]) -->
-<!-- ``` -->
-
-
-<!-- ```{r, fig.width=14, fig.height=8} -->
-<!-- top_colon = rownames(head(weights,20)) -->
-<!-- bottom_colon = rownames(tail(weights,20)) -->
-
-<!-- sel_genes = c(top_colon, bottom_colon, "CDX2","MUC2") -->
-
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- nc_mat_selected = as.matrix(nc_selected[,sel_samples]) -->
-<!-- nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) -->
-<!-- rownames(nc_mat_selected) = nc_selected$GeneSymbol -->
-<!-- col_anno = ed[, c("Condition","Patient")] -->
-<!-- rownames(col_anno) = paste0("X", ed$Library.number) -->
-<!-- breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10) -->
-<!-- row_anno = colon_vs_stomach_up_and_down[, "group", drop=F] -->
-
-<!-- pheatmap(nc_mat_selected, scale="row", main="Top20 associated with IM and non-IM" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"],  annotation_row = row_anno) -->
-
-<!-- ``` -->
-
-
-<!-- ## Unbiased score computed using all genes up or down in Colon vs. Stomach -->
-
-<!-- We here compute the median expression of all genes up or down-regulated in Colon vs. Stomach, respectively, for each sample. We then normalize those median values per sample by substracting the global median across all samples for each of the two parameters.  -->
-
-<!-- Finally, we substract the normalized stomach score from the normalized colon score to obtain the final value.  -->
-
-
-<!-- ```{r, fig.width=14} -->
-
-<!-- sel_genes = unique(colon_vs_stomach_up_and_down$GeneSymbol) -->
-
-<!-- sel_samples = paste0("X",ed$Library.number) -->
-<!-- nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes ) -->
-<!-- nc_mat_selected = as.matrix(nc_selected[,sel_samples]) -->
-<!-- nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01) -->
-<!-- rownames(nc_mat_selected) = nc_selected$GeneSymbol -->
-
-
-<!-- tmp = split(as.data.frame(nc_mat_selected), factor(colon_vs_stomach_up_and_down[rownames(nc_mat_selected), "group"])) -->
-<!-- medians_per_sample_and_group = do.call(rbind, lapply(tmp, apply, 2, median)) -->
-<!-- global_means = apply(medians_per_sample_and_group, 1, median) -->
-
-<!-- scores_normalized = sweep(medians_per_sample_and_group, 1, global_means, "-") -->
-<!-- col_anno = ed[, c("Condition","Patient")] -->
-<!-- rownames(col_anno) = paste0("X", ed$Library.number) -->
-<!-- pheatmap(scores_normalized, annotation_col = col_anno, labels_col = ed[gsub("^X", "", colnames(scores_normalized)), "Library.Name"]) -->
-
-
-<!-- scores_final = scores_normalized["Colon",]-scores_normalized["Stomach",] -->
-<!-- scores_final = scores_final[order(-scores_final)] -->
-<!-- barplot(scores_final, col = as.numeric(as.factor(col_anno[names(scores_final),"Condition"])), las=2, names.arg = ed[gsub("^X", "", names(scores_final)), "Library.Name"], ylab="Colon-vs-Stomach score") -->
-
-<!-- ``` -->
+```{r, fig.width=10, fig.height=6}
+sel_genes = c("GKN1","GKN2","PGC","MUC5AC","MUC6","TFF3","VIL1","CDX1","CDX2","ISX", "MUC2", "SPINK4","ITLN1","TFF2", "TFF1", "REG4", "LRIG1", "OLFM4","SOX2", "AQP5","CD44","TACSTD2","IRX2")
+
+sel_samples = paste0("X",ed$Library.number)
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+
+col_anno = ed[, c("Condition","Patient")]
+rownames(col_anno) = paste0("X", ed$Library.number)
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+pheatmap(nc_mat_selected, 
+         scale="row", 
+         main="Known IM markers" , 
+         annotation_col = col_anno, 
+         breaks=breaks_new, 
+         cluster_rows = T,
+         clustering_distance_rows = "euclidean",
+         labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"])
+
+```
+
+```{r, fig.width=16}
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd$sample = gsub("^X","", dd$sample)
+dd = as.data.table(merge(dd, ed[, c("Library.number","Patient","Condition")], by.x="sample", by.y="Library.number"))
+
+ggplot(dd, aes(x=gene, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + scale_y_log10()
+
+ggplot(dd, aes(x=Condition, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + facet_wrap(~gene, scales = "free_y")
+
+
+```
+
+```{r, fig.width=12}
+cond_order = c("Normal Antrum","Non-IM","IM","Duodenum","Colon")
+sel_genes_2 = c("SOX2","TFF1","TFF2","GKN1","GKN2","CDX2","VIL1","CD44","AQP5","SPINK4")
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd$sample = gsub("^X","", dd$sample)
+dd = as.data.table(merge(dd, ed[, c("Library.number","Patient","Condition")], by.x="sample", by.y="Library.number"))
+
+dd1 <- subset(dd, gene %in% sel_genes_2 & Condition != "Normal Antrum 2")
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="Normalized counts")
+```
+
+
+```{r, fig.width=12}
+mat_avg <- limma::avearrays(nc_mat_selected, ID = ed[gsub("X","",colnames(nc_mat_selected)), "Patient_and_Condition"])
+
+dd = reshape2::melt(mat_avg)
+colnames(dd) = c("gene","sample", "expression")
+dd <- as.data.table(dd)
+dd[, Condition:=unlist(sapply(strsplit(as.character(sample), "_"), `[`,2))]
+
+dd1 <- subset(dd, gene %in% sel_genes_2 & Condition != "Normal Antrum 2")
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="FPKM")
+```
+
+
+
+
+
+
+# Unbiased score computed using all genes up or down in Colon vs. Stomach
+
+We here compute the median expression of all genes up or down-regulated in Colon vs. Stomach, respectively, for each sample. We then normalize those median values per sample by substracting the global median across all samples for each of the two parameters.
+
+Finally, we substract the normalized stomach score from the normalized colon score to obtain the final value.
+
+```{r}
+# Colon vs. Stomach signature
+colon_sig_tmp = read.table("../../../../Data/ExtData/Colon_vs_Stomach/Colon_vs_Stomach_DGE_v2.txt", sep="\t", header=T, stringsAsFactors = F)
+all_gene_sets <- list()
+all_gene_sets[["Colon_vs_Stomach_up"]] = subset(colon_sig_tmp, logFC > 1 & adj.P.Val < 0.05)$SYMBOL
+all_gene_sets[["Colon_vs_Stomach_down"]] = subset(colon_sig_tmp, logFC < -1 & adj.P.Val < 0.05)$SYMBOL
+```
+
+
+```{r, fig.width=14}
+colon_vs_stomach_up_and_down = unique(data.frame(GeneSymbol = c(all_gene_sets[["Colon_vs_Stomach_up"]], all_gene_sets[["Colon_vs_Stomach_down"]]),
+                                    group = c(rep("Colon", length(all_gene_sets[["Colon_vs_Stomach_up"]])), rep("Stomach", length(all_gene_sets[["Colon_vs_Stomach_down"]]))), stringsAsFactors = F))
+rownames(colon_vs_stomach_up_and_down) = colon_vs_stomach_up_and_down$GeneSymbol
+```
+
+
+```{r, fig.width=14}
+
+sel_genes = unique(colon_vs_stomach_up_and_down$GeneSymbol)
+
+sel_samples = subset(ed, Condition != "Normal Antrum 2")$Library.number |> (\(x) paste0("X",x))()
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+
+
+tmp = split(as.data.frame(nc_mat_selected), factor(colon_vs_stomach_up_and_down[rownames(nc_mat_selected), "group"]))
+medians_per_sample_and_group = do.call(rbind, lapply(tmp, apply, 2, median))
+global_means = apply(medians_per_sample_and_group, 1, median)
+
+scores_normalized = sweep(medians_per_sample_and_group, 1, global_means, "-")
+col_anno = ed[, c("Condition","Patient")]
+rownames(col_anno) = paste0("X", ed$Library.number)
+pheatmap(scores_normalized, annotation_col = col_anno, labels_col = ed[gsub("^X", "", colnames(scores_normalized)), "Library.Name"])
+
+scores_final = scores_normalized["Colon",]-scores_normalized["Stomach",]
+scores_final = scores_final[order(-scores_final)]
+barplot(scores_final, col = as.numeric(as.factor(col_anno[names(scores_final),"Condition"])), las=2, names.arg = ed[gsub("^X", "", names(scores_final)), "Library.Name"], ylab="Colon-vs-Stomach score")
+```
+
+
+```{r}
+
+score_df <- as.data.frame(scores_final)
+score_df$Condition <- ed[gsub("^X","", rownames(score_df)), "Condition"] |> factor(levels = c("Normal Antrum","Non-IM","IM","Duodenum","Colon"))
+score_df$Patient <- ed[gsub("^X","", rownames(score_df)), "Patient"] 
+score_df$Patient <- ifelse(score_df$Condition=="Normal Antrum","Normal Antrum", score_df$Patient)
+
+ymax = max(score_df$scores_final, na.rm=T)
+ymin = min(score_df$scores_final, na.rm=T)
+
+ggplot(score_df, aes(y=scores_final, x= Condition, fill=Patient)) + 
+  geom_boxplot() + 
+  #stat_summary(col = "black", position = position_dodge(width = .7), geom = "pointrange", fun.data = function(x) mean_se(x, mult = 2), size=1) + 
+  geom_point(position = position_jitterdodge(jitter.width = .2)) + 
+  theme(axis.text.x=element_text(angle=45, hjust = 1)) + 
+  labs(y="Intestine vs Stomach Score", x="" ) + 
+  geom_hline(yintercept=0, lty=2, col="red")
+```
+
+```{r}
+
+score_df <- as.data.frame(scores_final)
+score_df$Condition <- ed[gsub("^X","", rownames(score_df)), "Condition"] |> factor(levels = c("Normal Antrum","Non-IM","IM","Duodenum","Colon"))
+score_df$Patient <- ed[gsub("^X","", rownames(score_df)), "Patient"] 
+
+score_df_avg <- as.data.table(score_df)[, .(scores_final = mean(scores_final, na.rm=T)), by=c("Condition","Patient")]
+
+ymax = max(score_df$scores_final, na.rm=T)
+ymin = min(score_df$scores_final, na.rm=T)
+
+ggplot(score_df_avg, aes(y=scores_final, x= Condition, col=Condition)) + 
+  #geom_boxplot() + 
+  stat_summary() + 
+  geom_point() + 
+  theme(axis.text.x=element_text(angle=45, hjust = 1)) + 
+  labs(y="Intestine vs Stomach Score", x="" ) + 
+  #geom_hline(yintercept=0, lty=2, col="red") + 
+  stat_compare_means(method="t.test", aes(label = "p.format"), label.y = c(ymax*.85, ymax*1.05, ymax*.6), label.x = 1:5, comparisons = list(c("IM","Non-IM"), c("IM","Normal Antrum"), c("Non-IM","Normal Antrum"))) 
+```
+
 
 <!-- # Goblet cell subtype markers (Zhang et al. 2019) -->
 
