@@ -24,12 +24,50 @@ res_pc <- all_res_beta_pc[["IMvsNormalAntrum"]]
 res_cl <- all_res_beta_cl[["IMvsNormalAntrum"]]
 ```
 
+
+```{r}
+if(F) {
+  all_results_beta_annotated_wgs <- readRDS("../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM.rds")
+  
+  # wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
+  #   x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
+  #   x$direction <- ifelse(x$logFC > 0.2, "hyper", "hypo")
+  #   return(x)
+  # })
+  
+  wgs_all_ilmn <- lapply(all_results_beta_annotated_wgs, function(x) {
+    x <- subset(x, !is.na(ilmn_id))
+    x$dge_class <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(x$logFC > 0, ifelse(x$logFC > 0.2, "hyper", "hyper_weak"), ifelse(x$logFC < -0.2, "hypo", "hypo_weak")))
+    x$direction <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(abs(x$logFC) < 0.2, "nc/weak", ifelse(x$logFC > 0.2, "hyper", "hypo")))
+    return(x)
+  })
+  
+  saveRDS(wgs_all_ilmn, file="../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM_EPIC_only.rds", compress=T)
+} else {
+  wgs_all_ilmn <- readRDS(file="../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM_EPIC_only.rds")
+}
+```
+
+
+```{r}
+wgs_corpus_vs_antrum <- wgs_all_ilmn$StoCorpus_vs_StoAntrum[, c("ilmn_id","dge_class","direction")]
+colnames(wgs_corpus_vs_antrum) <- c("ilmn_id","wgbs_corpus_vs_antrum_dge_class", "wgbs_corpus_vs_antrum_direction")
+
+res_cl <- merge(res_cl, wgs_corpus_vs_antrum, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+res_pc <- merge(res_pc, wgs_corpus_vs_antrum, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+
+```
+
+
+
 ```{r}
 sel_cols_cl <- c("Row.names","logFC","AveExpr","t","P.Value","adj.P.Val","B")
-sel_cols_pc <- c("Row.names","logFC","AveExpr","t","P.Value","adj.P.Val","B","UCSC_RefGene_Name","UCSC_RefGene_Accession","UCSC_RefGene_Group","Phantom5_Enhancers","DMR","X450k_Enhancer","Regulatory_Feature_Group","GencodeCompV12_NAME","GencodeCompV12_Accession","GencodeCompV12_Group","DNase_Hypersensitivity_NAME","DNase_Hypersensitivity_Evidence_Count","OpenChromatin_NAME","OpenChromatin_Evidence_Count","TFBS_NAME","TFBS_Evidence_Count","Colon_vs_StoAntrum","SI_vs_StoAntrum","Antrum_EPIC","Corpus_EPIC","Colon.Left_WGS","Colon.Right_WGS","Gastric.antrum_WGS","Gastric.body_WGS","Gastric.fundus_WGS","Small.int_WGS")
+sel_cols_pc <- c("Row.names","logFC","AveExpr","t","P.Value","adj.P.Val","B","UCSC_RefGene_Name","UCSC_RefGene_Accession","UCSC_RefGene_Group","Phantom5_Enhancers","DMR","X450k_Enhancer","Regulatory_Feature_Group","GencodeCompV12_NAME","GencodeCompV12_Accession","GencodeCompV12_Group","DNase_Hypersensitivity_NAME","DNase_Hypersensitivity_Evidence_Count","OpenChromatin_NAME","OpenChromatin_Evidence_Count","TFBS_NAME","TFBS_Evidence_Count","Colon_vs_StoAntrum","SI_vs_StoAntrum","Antrum_EPIC","Corpus_EPIC","Colon.Left_WGS","Colon.Right_WGS","Gastric.antrum_WGS","Gastric.body_WGS","Gastric.fundus_WGS","Small.int_WGS","wgbs_corpus_vs_antrum_dge_class", "wgbs_corpus_vs_antrum_direction")
 res_comb <- merge(res_cl[, sel_cols_cl], res_pc[, sel_cols_pc], by="Row.names", sort=F)
 colnames(res_comb) <- gsub("\\.y", "_polyclonal", gsub("\\.x", "_clonal", colnames(res_comb)) )
 ```
+
+# General correlation
 
 ```{r, fig.width=5, fig.height=5}
 plot(res_comb$logFC_clonal, res_comb$logFC_polyclonal, pch=20, col=rgb(0,0,0,0.2), main="All probes", xlab="diff beta clonal", ylab="diff beta polyclonal")
@@ -38,18 +76,29 @@ with(sig_any, plot(logFC_clonal, logFC_polyclonal, pch=20, col=rgb(0,0,0,0.2), m
 abline(h=0, v=0, lty=2)
 ```
 
+# Concordant DM probes
+
 ```{r}
 concording_res <- subset(res_comb, (sign(logFC_clonal) * sign(logFC_polyclonal)) > 0 & adj.P.Val_clonal < 0.05 & adj.P.Val_polyclonal < 0.05)
+cat("Total concordant probes")
 nrow(concording_res)
 
-table(sign(concording_res$logFC_clonal))
+table(ifelse(sign(concording_res$logFC_clonal) > 0, "Hypermethylated","Hypomethylated"))
+```
+
+
+```{r}
 
 table(concording_res$Colon_vs_StoAntrum, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("Colon_vs_Stomach","IM_vs_Antrum") )
 
 table(concording_res$SI_vs_StoAntrum, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("SI_vs_Stomach","IM_vs_Antrum") )
 
 table(concording_res$Antrum_EPIC, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("U.M class Antrum EPIC","IM_vs_Antrum") )
+
+table(concording_res$wgbs_corpus_vs_antrum_direction, ifelse(sign(concording_res$logFC_clonal)==1, "Hypermethylated", "Hypomethylated"), dnn=c("DGE class WGS Corpus vs. Antrum","IM_vs_Antrum"), useNA="always" )
 ```
+
+# TFs
 
 ```{r}
 tf <- read.table("~/Work/References/pyscenic/hs_hgnc_tfs.txt", sep="\t", header=F)
@@ -72,7 +121,7 @@ candidates_hypo$is_TF <- sapply(hypo_genes, function(x) any(match(tf$V1, x)))
 ```
 
 
-# TFs, hyperm.
+## TFs, hyperm.
 
 ```{r}
 tf_hyper <- subset(candidates_hyper, is_TF)$gene_symbols |> table() |> sort()
