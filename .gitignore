@@ -56,4 +56,9 @@ rsconnect/
 *.pdf
 *.log
 *.Rout
-
+*.gz
+*.xlsx
+*.loom
+*.tgz
+*.zip
+*.tar

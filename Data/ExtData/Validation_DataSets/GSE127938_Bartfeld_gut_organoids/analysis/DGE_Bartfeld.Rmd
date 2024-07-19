@@ -1,0 +1,126 @@
+---
+title: "Differential gene expression analysis"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(DESeq2)
+library(data.table)
+library(pheatmap)
+library(umap)
+
+result_folder = paste("./Results",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+```
+
+
+```{r}
+bartfeld_folder = ".."
+human_data = fread(cmd = paste0("zcat ",file.path(bartfeld_folder,"Raw_counts/GSE127938_human_gastro_organoids_read_counts.txt.gz") ) )
+bartfeld_mat = as.matrix(human_data[,3:ncol(human_data)])
+rownames(bartfeld_mat) = human_data$V1
+
+load("./GSE127938_human_RNASeq.Rdata")
+
+ed = human_col_anno
+
+#comb_ed = data.frame(sample_name = c(b_ed$sampleID, e_ed$Library.Name), condition = c(b_ed$tissue, e_ed$Condition), row.names = c(rownames(b_ed), rownames(e_ed)), ds = c(rep("Bartfeld", nrow(b_ed)), rep("ESGIv2", nrow(e_ed))) ) 
+
+gene_anno = human_gene_anno
+
+# remove mitochondrial genes as those seem to have been treated differentially by both protocols or preprocessing pipelines
+# MT_genes = subset(gene_anno, grepl("^mitochondrially encoded", GeneName) | Chr=="MT")
+# comb_mat = comb_mat[!rownames(comb_mat) %in% rownames(MT_genes),]
+
+```
+
+# DGE
+
+```{r}
+
+included_genes = (apply(bartfeld_mat,1,max) > 1 )# & rownames(comb_mat) # %in% tf_in_ds$Geneid) # & (substr(rownames(count_mat),1,1)!="_")
+
+all_results = list()
+
+
+ed$condition2 = ifelse(ed$tissue %in% c("stomach corpus", "stomach pylorus"), "stomach", ifelse(ed$tissue %in% c("colon"), "large intestine", "small intestine"))
+
+dds_selected = DESeqDataSetFromMatrix(countData = bartfeld_mat, colData = ed, design = ~ condition2)
+
+dds_selected <- DESeq(dds_selected, fitType="local")
+
+############################################
+# Stomach vs. caudal
+############################################
+
+res <- results(dds_selected, contrast=c("condition2","stomach","large intestine"))
+all_results[["Stomach_vs_LI"]] = res
+
+
+############################################
+# Stomach vs. cranial intestine
+############################################
+
+res <- results(dds_selected, contrast=c("condition2","stomach","small intestine"))
+all_results[["Stomach_vs_SI"]] = res
+
+
+############################################
+# cranial vs. caudal intestine
+############################################
+
+res <- results(dds_selected, contrast=c("condition2","small intestine", "large intestine"))
+all_results[["SI_vs_LI"]] = res
+
+excluded_genes = names(included_genes[!included_genes])
+cols_in_res_table = colnames(all_results[[1]])
+empty_cols = do.call(cbind, Map(function(x) rep(NA, length(excluded_genes)), cols_in_res_table ))
+excluded_gene_tab = data.frame(row.names = excluded_genes, empty_cols )
+
+for (n in names(all_results)) {
+  tmp = all_results[[n]]
+  resOrdered <- data.frame(tmp[order(tmp$pvalue),])
+  resOrdered = rbind(resOrdered, excluded_gene_tab)
+  resOrdered$padj = ifelse(is.na(resOrdered$padj),1,resOrdered$padj)
+  res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("GeneSymbol"), drop=F], by.x=0, by.y=0, sort=F))
+  #res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  res_annotated = merge(res_annotated, bartfeld_mat, by.x="Row.names",by.y=0, all.x=T, sort=F)
+  all_results[[n]] = res_annotated
+}
+
+normalized = assay(vst(dds_selected))
+save(all_results, normalized, ed, file=file.path(result_folder, "Bartfeld_DGE_all.Rdata"))
+```
+
+
+
+```{r, fig.width=12, fig.height=6}
+##################################################################
+# Volcanos 
+##################################################################
+
+all_target_conditions = names(all_results)
+par(mfrow=c(1,3))
+for (tc in all_target_conditions) {
+  r = all_results[[tc]]
+  plot(r$log2FoldChange, -log10(r$padj),xlab="log2 Fold Change",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$padj),na.rm=T))), pch=20)
+  title(main=tc, sub=paste("(",nrow(subset(r, padj < 0.05))," signif. DE genes)",sep="") )
+  abline(h=-log10(0.05),col="red")
+  abline(v=c(-1,1), lty=2)
+}
+
+```
+
