@@ -121,7 +121,7 @@ if(FALSE) {
   all_results_betas[["IMvsNonIM_592_594"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
   
 
-  # IM vs. IM, patients 592 and 594, replicates averaged
+  # IM vs. non-IM, patients 592 and 594, patient modeled as blocking factor
   sel_conditions = c("IM","non-IM")
   sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions & PatientID %in% c("592","594")))
   edata = data_matrix[,sel_samples]
@@ -141,6 +141,7 @@ if(FALSE) {
   all_results_betas[["IMvsNonIM_592_594_avg_by_patient"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
 
 
+  # IM vs. non-IM, patients 592 and 594, replicates averaged
   design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
   
   fit <- lmFit(edata_avg,design)
