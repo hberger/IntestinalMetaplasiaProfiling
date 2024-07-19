@@ -147,6 +147,8 @@ pheatmap(res_gsva_s2, annotation_col = col_anno, labels_col = ed[colnames(res_gs
 
 
 ```{r, fig.width=12, fig.height=4}
+cond_order <- c("Normal stomach","Non-IM","IM","SI")
+ed$Condition <- factor(ed$Condition, levels=cond_order)
 p1 <- ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Score)) + 
   geom_line(aes(group = Patient)) + 
   geom_point(aes(group = Patient, col=Condition)) + 
@@ -167,6 +169,22 @@ p3 <- ggplot(ed[colnames(input_mat),], aes(x=Condition, y = Stomach)) +
 
 cowplot::plot_grid(p1,p2,p3, nrow = 1)
 
+```
+
+```{r, fig.width=6, fig.height=4}
+cond_order <- c("Normal stomach","Non-IM","IM","SI")
+ed$Condition <- factor(ed$Condition, levels=cond_order)
+ymin = min(ed$Score)
+ymax = max(ed$Score)
+tmp <- ed[colnames(input_mat),]
+p1 <- ggplot(tmp, aes(x=Condition, y = Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Bulk Colon vs. Stomach score") + 
+  ylab("Intestine vs. Stomach Score") + 
+  stat_compare_means(method="t.test", aes(label = "p.format"), label.y = c(ymax*.7, ymax*.9, ymax*.5), label.x = 1:5, comparisons = list(c("IM","Non-IM"), c("IM","Normal stomach"), c("Non-IM","Normal stomach")))
+p1
 ```
 
 ```{r, fig.width=12, fig.height=8, warning=FALSE}
@@ -197,13 +215,28 @@ ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) +
   geom_line(aes(group = Patient)) + 
   geom_point(aes(group = Patient, col=Condition)) + 
   facet_wrap(~Cluster, ncol = 8) + 
-  theme(axis.text.x=element_text(angle=45, hjust=1))
+  theme(axis.text.x=element_text(angle=45, hjust=1))  + 
+  stat_compare_means(method="wilcox.test", paired = T, aes(label = "p.format"), label.y = c(ymax*.9), label.x = 1:5, comparisons = list(c("IM","Non-IM")))
 
 
 
 # 
 # ggplot(subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S")), aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Only good normal stomach samples")
 ```
+
+```{r, fig.width=12, fig.height=8, warning=FALSE}
+tmp <- rr_ts
+tmp$Condition <- factor(tmp$Condition, levels = cond_order)
+ggplot(tmp, aes(x=Condition, y = GSVA_Score)) + 
+  geom_line(aes(group = Patient), col="grey50") + 
+  stat_summary(geom="crossbar") + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1))  + 
+  stat_compare_means(method="wilcox.test", paired = T, aes(label = "p.format"), label.y = c(ymax*.9), comparisons = list(c("IM","Non-IM")))
+
+```
+
 
 ## Spearman Correlation of Colon vs. Stomach score with signature estimates
 
@@ -302,6 +335,21 @@ ggplot(rr_ts, aes(x=Condition, y = GSVA_Score)) +
 # 
 # ggplot(subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S")), aes(x=Condition, fill=Patient, y = Score)) + geom_boxplot() + facet_wrap(~Cluster) + geom_hline(yintercept=0, lty=2) + theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Only good normal stomach samples")
 ```
+
+
+```{r}
+rr_ts$Condition <- factor(rr_ts$Condition, levels = cond_order)
+tmp <- subset(rr_ts, Cluster %in% c("Colonocyte","Intestinal stem cell","Pit cells b"))
+tmp$Cluster <- factor(tmp$Cluster, levels=c("Pit cells b","Intestinal stem cell", "Colonocyte"))
+ggplot(tmp, aes(x=Condition, y = GSVA_Score)) + 
+  geom_line(aes(group = Patient)) + 
+  geom_point(aes(group = Patient, col=Condition)) + 
+  facet_wrap(~Cluster, ncol = 8) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  stat_compare_means(method="wilcox.test", paired=T, aes(label = "p.format"), label.y = c(ymax*.9), label.x = 1:5, comparisons = list(c("IM","Non-IM")))
+
+```
+
 
 # Spearman Correlation of Colon vs. Stomach score with signature estimates
 
