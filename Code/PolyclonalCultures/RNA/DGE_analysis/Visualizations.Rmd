@@ -971,3 +971,69 @@ cc = cc[order(cc$V1, decreasing=T),]
 head(cc, 10)
 tail(cc, 10)
 ```
+
+
+
+# Known IM/intestinal markersi
+
+## FPKM
+
+TACSTD2 = TROP2
+
+```{r, fig.width=10, fig.height=6}
+sel_genes = c("GKN1","GKN2","PGC","MUC5AC","MUC6","TFF3","VIL1","CDX1","CDX2","ISX", "MUC2", "SPINK4","ITLN1","TFF2", "TFF1", "REG4", "LRIG1", "OLFM4","SOX2", "AQP5","CD44","TACSTD2","IRX2")
+
+sel_samples = rownames(ed)
+#nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+#nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+#nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+#rownames(nc_mat_selected) = nc_selected$GeneSymbol
+nc_mat_selected <- fpkm_mat[subset(gene_anno, GeneSymbol %in% sel_genes)$Geneid,]
+rownames(nc_mat_selected) <- gene_anno[rownames(nc_mat_selected), "GeneSymbol"]
+col_anno = ed[, c("Condition","Patient")]
+rownames(col_anno) = ed$sampleID
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+pheatmap(nc_mat_selected, 
+         scale="row", 
+         main="Known IM markers" , 
+         annotation_col = col_anno, 
+         breaks=breaks_new, 
+         cluster_rows = T,
+         clustering_distance_rows = "euclidean",
+         labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"])
+
+```
+
+```{r, fig.width=16}
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+
+ggplot(dd, aes(x=gene, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + scale_y_log10()
+
+ggplot(dd, aes(x=Condition, fill=Condition, y=expression+1)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) + facet_wrap(~gene, scales = "free_y")
+
+
+```
+
+```{r, fig.width=12}
+cond_order = c("Normal Antrum","Non-IM","IM","SI")
+sel_genes_2 = c("SOX2","TFF1","TFF2","GKN1","MUC5AC","CDX2","HNF4A","VIL1","CD44","AQP5")
+nc_mat_selected <- fpkm_mat[subset(gene_anno, GeneSymbol %in% sel_genes_2)$Geneid,]
+rownames(nc_mat_selected) <- gene_anno[rownames(nc_mat_selected), "GeneSymbol"]
+
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+dd$Condition <- ifelse(dd$Condition=="Stomach control","Normal Antrum", as.character(dd$Condition))
+
+dd1 <- subset(dd, gene %in% sel_genes_2)
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="FPKM")
+```

@@ -99,7 +99,10 @@ condition_levels_ordered = c("Healthy stomach","Intestinal/-like")
 
 combined_tabs$Condition = factor(combined_tabs$Condition, levels=condition_levels_ordered)
 
-combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Caudal intestine","Kayisoglu, Cranial intestine","van de Wetering,Colon","evPC SI vs Stomach","Nookaew IM,antrum", "Nookaew IM,corpus", "Companioni IM", "Thorell, Atrophy", "Thorell, Ext. atrophy", "GSE173264, iPSC" ,"evC IM vs normal", "evC IM vs non-IM", "evC IM vs non-IM 2pat", "evPC IM vs Non-IM") )
+cohort_old_to_new = c("Kayisoglu, Large intestine"="Colon organoids, Kaisoglu","van de Wetering,Colon"="Colon organoids, van de Wetering","Kayisoglu, Small intestine"="SI organoids, Kayisoglu","evPC SI vs Stomach"="SI organoids, evPC","Nookaew IM,antrum"="IM antrum, Nookaew", "Nookaew IM,corpus"="IM corpus, Nookaew", "Companioni IM"="IM, Companioni", "Thorell, Atrophy"="Atrophy, Thorell", "Thorell, Ext. atrophy"="Extr. atrophy, Thorell", "GSE173264, iPSC"="CDX2 KI iPSC" ,"evC IM vs normal"="IM vs. normal, evC", "evC IM vs non-IM"="IM vs. non-IM, evC", "evC IM vs non-IM 2pat"="IM vs non-IM (2p), evC", "evPC IM vs Non-IM"="IM vs. non-IM, evPC")
+
+combined_tabs$Cohort = factor(cohort_old_to_new[combined_tabs$Cohort], levels = cohort_old_to_new)
+
 
 # combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=c("Kayisoglu, Hs, Caudal intestine","Kayisoglu, Hs, Cranial intestine","van de Wetering colon biobank","China SI vs Stomach","Nookaew et al.,antrum", "Nookaew et al.,corpus", "Companioni et al.", "Thorell, Hs, Atrophy", "Thorell, Hs, Ext. atrophy","ESGIv2 IM vs normal", "ESGIv2 IM vs non-IM", "ESGIv2 IM vs non-IM, P591", "ESGIv2 IM vs non-IM, P592", "ESGIv2 IM vs non-IM, P594", "China IM vs Non-IM") )
 #combined_tabs$Cohort = factor(combined_tabs$Cohort, levels=naturalsort(unique(combined_tabs$Cohort)))
@@ -132,6 +135,10 @@ all_plots = list()
 
 for (gg in sel_genes) {
   emat_ts = subset(combined_tabs, SYMBOL==gg & Condition %in% c("Healthy stomach","Intestinal/-like"))
+  emat_ts$Cohort2 <- gsub(",[ ]*", "\n", as.character(emat_ts$Cohort)) |> factor(levels=gsub(",[ ]*", "\n", levels(emat_ts$Cohort)))
+
+  
+  
   ymin = min(-3,min(emat_ts$Expression_antrum_centered))
   ymax = max(3, max(emat_ts$Expression_antrum_centered))
 
@@ -139,7 +146,7 @@ for (gg in sel_genes) {
     #stat_summary(fun.y = mean, fun.ymin = mean, fun.ymax = mean,  geom="crossbar",width=0.5, aes(col=Site)) + 
     stat_summary(fun.y = mean, geom="bar",width=0.5, aes(col=Condition)) + 
     geom_point(aes(col=Condition)) + 
-    facet_nested(~  Cohort + PROBE_ID) + ggtitle(gg) +
+    facet_nested(~  Cohort2 + PROBE_ID) + ggtitle(gg) +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1), strip.text.x = element_text(hjust=0, size=8, angle=0)) + 
     coord_cartesian(ylim=c(ymin,ymax)) + 

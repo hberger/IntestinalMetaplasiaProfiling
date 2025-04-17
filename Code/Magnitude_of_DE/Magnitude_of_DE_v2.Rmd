@@ -1,0 +1,227 @@
+---
+title: "Magnitude of DE"
+output: html_document
+date: "2024-10-20"
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(fgsea)
+library(BiocParallel)
+library(robustbase)
+library(ggpubr)
+
+result_folder = "../../Results/Magnitude_of_DE"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+```
+
+
+# What DS we need
+
+  - one reference of in-vivo Colon vs.  Stomach
+  - one reference of in-vivo IM vs. healthy / non-IM
+  - Organoids +WR colon vs.Stomach (van Wetering + Bartfeld / Kayisoglu)
+  - ex-vivo  IM vs. non-IM 
+  - ex-vivo IM vs. healthy stomach
+  - Marker genes of scRNA IM + healthy gut (SI, LI, stomach)
+  
+```{r}
+all_ds = readRDS("../../Data/ExtData/Validation_DataSets/Joint_datasets.rds")
+all_ds <- all_ds[!names(all_ds) %in% c("China_IM_10best","Thorell_atrophy", "Thorell_ext.atrophy", "Nookaew", "ESGIv2_IM_vs_nonIM_2pat")]
+
+#all_ds$Nookaew$dge <- all_ds$Nookaew$dge["Atrophy_vs_NI_Antrum"]
+
+sc_Yue <- readRDS("../../Data/ExtData/Yue_scRNA_IMO/PseudoBulk_DGE_IM_vs_normal.rds")
+
+# all_ds[["Yue_scIMO"]] <- list(dge = sc_Yue[c("IM_Wnt_vs_Normal_Wnt","IM_noWnt_vs_Normal_noWnt" )])
+# all_ds[["Yue_scIntestineO"]] <- list(dge = sc_Yue[c("SI_Wnt_vs_Normal_Wnt","SI_noWnt_vs_Normal_noWnt")])
+# all_ds[["Yue_scIM"]] <- list(dge = sc_Yue[c( "IM_Tissue_vs_Normal_Wnt", "IM_Tissue_vs_Normal_noWnt" )])
+all_ds[["Yue_scIMO"]] <- list(dge = sc_Yue[c("IM_noWnt_vs_Normal_noWnt" )])
+all_ds[["Yue_scIntestineO"]] <- list(dge = sc_Yue[c("SI_noWnt_vs_Normal_noWnt")])
+all_ds[["Yue_scIM"]] <- list(dge = sc_Yue[c( "IM_Tissue_vs_Normal_noWnt" )])
+```
+
+```{r}
+ds_to_type <- c(
+#                "Nookaew" = "Atrophy",
+                "Companioni" = "IM",
+                "Kayisoglu_caudal"="LI ex vivo",
+                "Kayisoglu_cranial"="SI ex vivo",
+#                "Thorell_atrophy"="Atrophy",
+#                "Thorell_ext.atrophy"="Atrophy",
+                "VanDeWetering"="LI ex vivo",
+                "ESGIv2_IM_vs_nonIM" = "IM ex vivo",
+                "ESGIv2_IM_vs_nonIM_2pat" = "IM ex vivo",
+                "China_IM" = "IM ex vivo",
+                "China_SIvsStomach"="SI ex vivo", 
+                "Li_IM"="IM", 
+                "GTEX_SI"="SI",
+                "GTEX_LI"="LI",
+                "Yue_scIMO"="IM ex vivo",
+                "Yue_scIntestineO"="SI ex vivo",
+                "Yue_scIM"="IM")
+```
+
+```{r}
+group_levels <- c("LI","SI","LI ex vivo","SI ex vivo", "IM", "IM ex vivo","Atrophy")
+bar_cols = c("brown","darkred","red","red3","orange","yellow","blue")
+names(bar_cols) <- group_levels
+```
+
+
+Idea: Best way of measuring RNA phenotype change is to look at scRNA derived signatures
+
+```{r}
+#tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+load("../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.Rdata")
+tmp = subset(cluster_markers, p_val_adj < 0.05 & avg_log2FC > 0.5)
+
+sc_sets = split(tmp$gene, tmp$cluster)
+
+```
+
+
+
+
+# Mean and median signature log2FC
+
+
+```{r, fig.width=8, fig.height=6}
+all_ovlp = list()
+sel_ds = names(all_ds)
+fc_threshold = 0.5
+adj_p_threshold = 0.1
+
+all_mean_lfc <- list()
+all_median_lfc <- list()
+all_huberM <- list()
+all_wins_mean_lfc <- list()
+
+for (n in sel_ds) {
+  tmp = all_ds[[n]]
+  
+  comps <- names(tmp$dge)
+  
+  for (cc in comps) {
+    tmp2 <- tmp$dge[[cc]]
+    
+    if("logFC" %in% colnames(tmp2)) {
+      #DESeq2
+      lfc_col <- "logFC"
+      if("SYMBOL" %in% colnames(tmp2)) {
+        gs_col = "SYMBOL"
+      } else {
+        gs_col = "Gene Symbol"
+      }
+    } else {
+      #LIMMA
+      lfc_col <- "log2FoldChange"
+      gs_col = "GeneSymbol"
+    }
+
+    for (gs in names(sc_sets)) {
+      set_genes = sc_sets[[gs]]
+      set_gene_agg_lfc <- tmp2[match(set_genes, tmp2[[gs_col]]), lfc_col ]
+      
+      all_mean_lfc[[paste0(n,"___",cc,"___",gs)]] = mean(set_gene_agg_lfc, na.rm=T)
+      all_median_lfc[[paste0(n,"___",cc,"___",gs)]] = median(set_gene_agg_lfc, na.rm=T)
+      all_huberM[[paste0(n,"___",cc,"___",gs)]] = huberM(set_gene_agg_lfc)$mu
+      all_wins_mean_lfc[[paste0(n,"___",cc,"___",gs)]] = mean(set_gene_agg_lfc, na.rm = T, trim = 0.025)
+    }
+  }
+}
+```
+
+```{r}
+lfc_res <- all_mean_lfc
+
+tmp <- strsplit(names(lfc_res), "___")
+res_desc <- data.frame(id = names(lfc_res), 
+                       ds = sapply(tmp, `[`, 1), 
+                       comp = sapply(tmp, `[`, 2),
+                       celltype = sapply(tmp, `[`, 3) |> gsub("UP_", "", x=_)
+                       )
+res_desc$label <- paste0(res_desc$ds, "_", res_desc$comp)
+res_desc$mean_lfc <- all_mean_lfc[res_desc$id] |> unlist()
+res_desc$median_lfc <- all_median_lfc[res_desc$id] |> unlist()
+res_desc$huberM_lfc <- all_huberM[res_desc$id] |> unlist()
+res_desc$wins_mean_lfc <- all_wins_mean_lfc[res_desc$id] |> unlist()
+
+res_desc$ds_type <- ds_to_type[res_desc$ds]
+
+```
+
+
+
+<!-- ## Mean logFC -->
+
+
+<!-- ```{r, fig.width=8} -->
+<!-- for (ct in unique(res_desc$celltype)) { -->
+<!--   tmp <- subset(res_desc, celltype == ct) -->
+<!--   tmp <- tmp[order(tmp$mean_lfc, decreasing = F),] -->
+
+<!--   group <- tmp$ds_type |> factor(levels=group_levels) -->
+<!--   cols = bar_cols[as.character(group)] -->
+<!--   par(mar=c(5,20,4,1)) -->
+<!--   barplot(tmp$mean_lfc, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols, xlab = "Mean log2FC") -->
+<!--   legend("bottomright", legend=levels(group), fill=bar_cols) -->
+<!-- } -->
+<!-- ``` -->
+
+
+```{r, fig.width=24}
+res_desc$ds_type <- factor(res_desc$ds_type, levels=group_levels)
+#ggplot(res_desc, aes(x=ds_type, fill=label, y=huberM_lfc)) + geom_bar(stat="identity", position = position_dodge()) + facet_wrap(~celltype, scales="free_y")
+
+ggplot(res_desc, aes(x=ds_type, col=label, y=huberM_lfc)) + 
+  geom_point(size=3) + 
+  stat_summary(aes(group=ds_type), fun.data = function(x) mean_se(x, mult = 2), size=1) + 
+  facet_wrap(~celltype, scales="free_y") + 
+  stat_compare_means(comparisons = list(c("IM ex vivo","IM"), c("IM ex vivo","SI ex vivo"), c("IM ex vivo","LI ex vivo"),c("SI ex vivo","IM"),c("LI ex vivo","IM")), method = "t.test")
+
+
+ggplot(res_desc, aes(x=ds_type, col=label, y=wins_mean_lfc)) + 
+  geom_point(size=3) + 
+  stat_summary(aes(group=ds_type), fun.data = function(x) mean_se(x, mult = 2), size=1) + 
+  facet_wrap(~celltype, scales="free_y") + 
+  stat_compare_means(comparisons = list(c("IM ex vivo","IM"), c("IM ex vivo","SI ex vivo"), c("IM ex vivo","LI ex vivo"),c("SI ex vivo","IM"),c("LI ex vivo","IM")), method = "t.test") + 
+  labs(x="", y="Winsorized Mean log2FC vs normal stomach")
+
+```
+
+
+# Final
+
+```{r, fig.width=14, fig.height=6}
+res_desc$ds_type <- factor(res_desc$ds_type, levels=group_levels)
+#ggplot(res_desc, aes(x=ds_type, fill=label, y=huberM_lfc)) + geom_bar(stat="identity", position = position_dodge()) + facet_wrap(~celltype, scales="free_y")
+
+sel_celltypes <- c("BEST4+ epithelial","Colonocyte AQP8","Enterocyte proximal","Goblet cell")
+res_desc_sel <- subset(res_desc, celltype %in% sel_celltypes)
+res_desc_sel$celltype <- factor(res_desc_sel$celltype, levels=sel_celltypes)
+
+p <- ggplot(res_desc_sel, aes(x=ds_type, col=ds_type, y=wins_mean_lfc)) + 
+  geom_point(size=3, col="grey50") + 
+  stat_summary(aes(group=ds_type), fun.data = function(x) mean_se(x, mult = 2), size=.5) + 
+  facet_wrap(~celltype, scales="free_y", ncol = 6) + 
+  #scale_y_continuous(limits = c(-3,5)) +
+  coord_cartesian(ylim=c(-.5,6)) +
+  theme_bw() + 
+  stat_compare_means(comparisons = list(c("IM ex vivo","IM"), c("IM ex vivo","SI ex vivo"),c("SI ex vivo","IM"), c("LI ex vivo","IM"), c("IM ex vivo","LI ex vivo")), method = "t.test", label.y.npc = 1) + 
+  labs(x="", y="Trimmed Mean of log2FC vs Normal Stomach") + 
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=16), 
+        legend.position = "none", 
+        strip.text = element_text(size=16) ) + 
+  geom_hline(yintercept = 0, lty=2)
+
+print(p)
+```
+
+```{r}
+pdf(file.path(result_folder, "Magnitude_of_DE_v2_sel_celltypes.pdf"), width=14, height = 6)
+print(p)
+dev.off()
+```
+

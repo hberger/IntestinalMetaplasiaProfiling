@@ -32,7 +32,7 @@ if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
 data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
 if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
 
-rerun_preprocessing = T
+rerun_preprocessing = F
 ```
 
 # Experimental Design:
@@ -176,7 +176,7 @@ my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = 
 
 mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$Sample_Name, legendPos = "bottomleft")
 
-mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$PatientID, legendPos = "bottomleft")
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$PatientID, legendPos = "topright")
 
 #tiff(filename = "MDS.tiff", width = 3, height =3, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
 #my_mdsPlot(myNorm, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")

@@ -1,0 +1,424 @@
+---
+title: "pySCENIC visualizations - IM + intestine, downsampled - differential activity between clusters"
+author: "Hilmar Berger"
+
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message = FALSE}
+library(Seurat)
+#library(escape)
+library(msigdbr)
+
+library(ggplot2)
+library(cowplot)
+
+library(data.table)
+
+library(Nebulosa)
+library(pheatmap)
+
+library(limma)
+library(writexl)
+library(scales)
+
+library(EnhancedVolcano)
+
+
+
+data_storage_folder = file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_with_GCA_downsampled")
+
+result_folder = "../../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+rerun_dge_analyses = F
+```
+
+# Overview
+
+This analysis is based on a PySCENIC analysis of mouse NASH/NAFLD models done by Jana Hundertmark.  
+
+
+```{r}
+scData <- readRDS(file.path("../../../../Data/ExtData/Zhang_scRNA", "ZhangIM_and_GutCellAtlas_HealthyAdult_Epi_BBKNN_CC_adjusted.RData"))
+meta <- readRDS("../../../../Data/ExtData/Zhang_scRNA/Zhang_IM_and_intestine_Epi_only_BBKNN_CC_adj_cluster_Metadata.RData")
+scData@meta.data <- meta[Cells(scData),]
+```
+
+```{r, fig.height=6, fig.width=8}
+scData$cluster_label = factor(scData$cluster_label, levels=sort(unique(scData$cluster_label)))
+scData <- SetIdent(scData, value="cluster_label")
+DimPlot(scData, label=T) + NoLegend()
+```
+
+
+```{r}
+n="Zhang_IM_intestine"
+pyscenic_res = read.table(file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_with_GCA_downsampled",paste0(n,"/auc_mtx.csv")), sep=",", header=T)
+colnames(pyscenic_res) = gsub("\\.\\.\\.", "", colnames(pyscenic_res))
+```
+
+```{r, fig.width=10, fig.height=10}
+all_tf_names = colnames(pyscenic_res)[2:ncol(pyscenic_res)]
+```
+
+```{r, fig.width=12, fig.height=7}
+tmp = pyscenic_res[, 2:ncol(pyscenic_res)]
+rownames(tmp) = pyscenic_res$Cell
+scores_ordered <- tmp[rownames(tmp) %in% Cells(scData), ]
+scores_ordered = tmp[Cells(scData)[Cells(scData) %in% rownames(scores_ordered)],]
+```
+
+# Differential TF activity
+
+## TF as cluster markers, across all conditions
+
+We compute average TF differences between clusters and select those with significant (Wilcoxon/U-test) differences of at least 0.01 activity score units and at least 5% relative difference (scaled. Since the range of those acivity scores (max 0..1) is different for each TF, we also compute a relative difference by dividing through the range of activity across all cells for each TF. 
+
+```{r}
+mm = t(scores_ordered)
+
+scData_orig <- scData
+scData <- subset(scData, cells = colnames(mm))
+scData[["pyscenic"]] = CreateAssayObject(data=mm)
+
+if(rerun_dge_analyses) {
+  tf_markers = FindAllMarkers(scData, assay="pyscenic", logfc.threshold = 0.01, min.pct = 0.1 )
+  colnames(tf_markers) = gsub("avg_log2FC", "avg_difference", colnames(tf_markers))
+  tf_ranges = apply(apply(mm, 1, range), 2, diff)
+  tf_markers$avg_diff_relative = tf_markers$avg_difference / tf_ranges[tf_markers$gene]
+  
+  tf_markers = tf_markers[, c("cluster", "gene",  "avg_difference", "avg_diff_relative", "p_val", "p_val_adj", "pct.1", "pct.2")]
+  tf_markers = tf_markers[order(as.character(tf_markers$cluster), -tf_markers$avg_diff_relative), ]
+  tf_markers = subset(tf_markers, abs(avg_diff_relative) > 0.05)
+  
+  writexl::write_xlsx(tf_markers, path=file.path(result_folder, "TF_cluster_markers_across_all.xlsx"))
+  saveRDS(tf_markers, file.path(data_storage_folder, "TF_cluster_markers_across_all.rds"))
+  
+} else {
+  tf_markers = readRDS(file.path(data_storage_folder, "TF_cluster_markers_across_all.rds"))
+}
+```
+
+## Absolute differences
+
+```{r}
+plot_top_genes <- function(data, dge_results_all, title) {
+  for (n in sort(unique(data$cluster_label))) {
+    tmp = subset(dge_results_all, cluster==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_difference > 0)
+    if(nrow(tmp_up)<1) next
+    tmp_up$direction = "up"
+    tmp_down = subset(tmp, avg_difference < 0)
+    tmp_down$direction = "down"
+    
+    #final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = head(tmp_up, 10)
+    final_top_genes = final_top_genes[order(final_top_genes$avg_difference),]
+    final_top_genes$gene = factor(final_top_genes$gene, levels = final_top_genes$gene)
+    p = ggplot(final_top_genes, aes(y=avg_difference, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=12) )
+    print(p)
+    
+  }
+}
+```
+
+```{r, fig.width=8, fig.height=4}
+plot_top_genes(scData, tf_markers, "Cluster TF markers")
+```
+
+## Relative differences
+
+```{r}
+plot_top_genes <- function(data, dge_results_all, title) {
+  for (n in sort(unique(data$cluster_label))) {
+    tmp = subset(dge_results_all, cluster==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_diff_relative > 0)
+    if(nrow(tmp_up)<1) next
+    tmp_up$direction = "up"
+    tmp_down = subset(tmp, avg_diff_relative < 0)
+    tmp_down$direction = "down"
+    
+    #final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = head(tmp_up, 10)
+    final_top_genes = final_top_genes[order(final_top_genes$avg_diff_relative),]
+    final_top_genes$gene = factor(final_top_genes$gene, levels = final_top_genes$gene)
+    p = ggplot(final_top_genes, aes(y=avg_diff_relative, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=12) )
+    print(p)
+    
+  }
+}
+```
+
+```{r, fig.width=8, fig.height=4}
+plot_top_genes(scData, tf_markers, "Cluster TF markers")
+```
+
+
+<!-- ## TF as cluster markers, only chow diet -->
+
+<!-- We only use chow diet from batch LiverBMCD2/tacke_p10 for this analysis. -->
+
+<!-- ```{r} -->
+<!-- scData.filtered = subset(scData, group == "Leber myeloid CD16 (Kontrolle)" & batch == "LiverBMCD2/tacke_p10") -->
+
+<!-- tf_markers = FindAllMarkers(scData.filtered, assay="pyscenic", logfc.threshold = 0.01, min.pct = 0.1 ) -->
+<!-- colnames(tf_markers) = gsub("avg_log2FC", "avg_difference", colnames(tf_markers)) -->
+<!-- tf_ranges = apply(apply(mm, 1, range), 2, diff) -->
+<!-- tf_markers$avg_diff_relative = tf_markers$avg_difference / tf_ranges[tf_markers$gene] -->
+
+<!-- tf_markers = tf_markers[, c("cluster", "gene",  "avg_difference", "avg_diff_relative", "p_val", "p_val_adj", "pct.1", "pct.2")] -->
+<!-- tf_markers = tf_markers[order(as.character(tf_markers$cluster), -tf_markers$avg_diff_relative), ] -->
+<!-- tf_markers = subset(tf_markers, abs(avg_diff_relative) > 0.05) -->
+
+
+<!-- writexl::write_xlsx(tf_markers, path=file.path(result_folder, "TF_cluster_markers_across_chow_diet_cells.xlsx")) -->
+<!-- ``` -->
+
+
+## Comparison between treatment groups
+
+We now compare TF activities between groups in cells belonging to the same clusters in order to identify treatment related TF changes. 
+
+```{r}
+compute_DGE <- function(data, target_suffix, control_suffix, group_parameter, min_cells_per_group = 20, sel_celltypes=NULL) {
+  all_celltypes = unique(data$cluster_label)
+  
+  dge_results = list()
+  
+  cellcounts_per_group = table(data$cluster_label, data@meta.data[[group_parameter]])
+  if(is.null(sel_celltypes)) sel_celltypes = rownames(cellcounts_per_group[apply(cellcounts_per_group, 1, min)>min_cells_per_group,])
+  
+  for (tt in sel_celltypes) {
+    tmp = FindMarkers(data , ident.1 = paste0(tt,target_suffix), ident.2 = paste0(tt,control_suffix), verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+    tmp$celltype = tt
+    tmp$GeneSymbol = rownames(tmp)
+    colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+    tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+    dge_results[[tt]] = tmp
+  }
+  
+  return(dge_results)
+}
+
+plot_top_genes <- function(data, dge_results_all, title) {
+  for (n in sort(unique(dge_results_all$celltype))) {
+    tmp = subset(dge_results_all, celltype==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_difference > 0)
+    if(nrow(tmp_up)>0) tmp_up$direction = "Up"
+    tmp_down = subset(tmp, avg_difference < 0)
+    if(nrow(tmp_down)>0) tmp_down$direction = "Down"
+    
+    final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = final_top_genes[order(final_top_genes$avg_difference),]
+    final_top_genes$gene = factor(final_top_genes$GeneSymbol, levels = final_top_genes$GeneSymbol)
+    cols = hue_pal()(2)
+    names(cols) = c("Up","Down")
+    p = ggplot(final_top_genes, aes(y=avg_difference, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=14) ) +   scale_fill_manual(values=cols)
+    print(p)
+    
+  }
+}
+
+plot_top_genes_rel <- function(data, dge_results_all, title) {
+  for (n in sort(unique(dge_results_all$celltype))) {
+    tmp = subset(dge_results_all, celltype==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_diff_relative > 0)
+    if(nrow(tmp_up)>0) tmp_up$direction = "Up"
+    tmp_down = subset(tmp, avg_diff_relative < 0)
+    if(nrow(tmp_down)>0) tmp_down$direction = "Down"
+    
+    final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = final_top_genes[order(final_top_genes$avg_diff_relative),]
+    final_top_genes$gene = factor(final_top_genes$GeneSymbol, levels = final_top_genes$GeneSymbol)
+    cols = hue_pal()(2)
+    names(cols) = c("Up","Down")
+    p = ggplot(final_top_genes, aes(y=avg_diff_relative, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=14) ) + labs(y="Difference relative to TF activity range")  +   scale_fill_manual(values=cols)
+    print(p)
+    
+  }
+}
+
+
+```
+
+```{r}
+scData$tissue = ifelse(scData$DS=="GutCellAtlas","gut","stomach")
+```
+
+
+## Selected comparisons
+
+We compare the following cell types: 
+
+  - Intestinal stem cell/stomach vs Intestinal stem cell/gut [ISC_sto_vs_ISC_gut]
+  - Intestinal stem cell/stomach vs Sto gland base/stomach [ISC_sto_vs_gland_base_sto]
+  - Enterocyte prox/stomach vs Enterocyte (prox)/gut [Enterocyte_prox_sto_vs_gut]
+  - Enterocyte DD/stomach vs Enterocyte DD/gut [Enterocyte_DD_sto_vs_gut]
+  - Enterocyte prox/stomach vs Sto gland base/stomach [Ent_prox_sto_vs_gland_base_sto]
+  - Goblet cell/stomach vs Goblet cell/gut [goblet_sto_vs_gut]
+  - Paneth/stomach vs Paneth/gut [paneth_sto_vs_gut]
+  - TA_Colonocyte/stomach vs TA_Colonocyte/gut [TA_Colonocyte_sto_vs_gut]
+
+<!--   - Enterocyte c/stomach vs Enterocyte a (prox)/gut [Enterocyte_c_vs_a] -->
+<!--   - Enterocyte a (prox)/stomach vs Enterocyte a (prox)/gut [Enterocyte_aST_vs_aG] -->
+<!--   - Enterocyte c/stomach vs Sto gland base/stomach [Ent_c_sto_vs_gland_base_sto] -->
+<!--   - metaplastic stomach/stomach vs TA b (SI)/gut [IM_sto_vs_TA/SC_SI] -->
+<!--   - metaplastic stomach/stomach vs Sto gland base/stomach [IM_sto_vs_gland_base_sto] -->
+<!--   - metaplastic stomach_stomach vs Pit cells/TA/SC_stomach [IM_sto_vs_TA_SC_sto] -->
+<!--   - BEST2+ Goblet cell/stomach vs BEST2+ Goblet cell/gut [goblet_sto_vs_gut] -->
+<!--   - Paneth/stomach vs Paneth/gut [paneth_sto_vs_gut] -->
+
+```{r}
+# selected_c = WhichCells(scData, expression = ( diet == "CD" &  tissue == "Liver"  & treatment_1 %in% c("CCl4", "untreated") & batch != "tacke_p1") )
+# sel_dds = subset(scData, cells = selected_c)
+sel_dds = scData
+
+title="Selected comparisons"
+
+sel_dds$celltype_condition = paste0(sel_dds$cluster_label, "_",sel_dds$tissue )
+
+# This is required for FindMarkers
+Idents(sel_dds) <- "celltype_condition"
+if(rerun_dge_analyses) {
+  dge_results = list()
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "Intestinal stem cell_stomach", ident.2 = "Intestinal stem cell_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "ISC_sto_vs_ISC_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["ISC_sto_vs_ISC_gut"]] = tmp
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "Intestinal stem cell_stomach", ident.2 = "Sto gland base_stomach", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "ISC_sto_vs_gland_base_sto"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["ISC_sto_vs_gland_base_sto"]] = tmp
+  
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "Enterocyte proximal_stomach", ident.2 = "Enterocyte proximal_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "Enterocyte_prox_sto_vs_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["Enterocyte_prox_sto_vs_gut"]] = tmp
+
+  tmp = FindMarkers(sel_dds , ident.1 = "Enterocyte DD_stomach", ident.2 = "Enterocyte DD_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "Enterocyte_DD_sto_vs_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["Enterocyte_DD_sto_vs_gut"]] = tmp
+
+    
+  tmp = FindMarkers(sel_dds , ident.1 = "Enterocyte proximal_stomach", ident.2 = "Sto gland base_stomach", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "Ent_prox_sto_vs_gland_base_sto"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["Ent_prox_sto_vs_gland_base_sto"]] = tmp
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "Goblet cell_stomach", ident.2 = "Goblet cell_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "goblet_sto_vs_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["goblet_sto_vs_gut"]] = tmp
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "Paneth_stomach", ident.2 = "Paneth_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "paneth_sto_vs_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["paneth_sto_vs_gut"]] = tmp
+  
+  tmp = FindMarkers(sel_dds , ident.1 = "TA/Colonocyte a_stomach", ident.2 = "TA/Colonocyte a_gut", verbose = FALSE, assay = "pyscenic", logfc.threshold = 0.01)
+  tmp$celltype = "TA_Colonocyte_a_sto_vs_gut"
+  tmp$GeneSymbol = rownames(tmp)
+  colnames(tmp) = gsub("avg_log2FC", "avg_difference", colnames(tmp))
+  tmp$avg_diff_relative = tmp$avg_difference / tf_ranges[tmp$GeneSymbol]
+  dge_results[["TA_Colonocyte_a_sto_vs_gut"]] = tmp
+  
+  dge_results_all = do.call(rbind, dge_results)
+  dge_results_all = dge_results_all[order(dge_results_all$celltype, -dge_results_all$avg_diff_relative), ]
+  dge_results_all = subset(dge_results_all, abs(avg_diff_relative)> 0.05)
+  write_xlsx(dge_results_all, file.path(result_folder, paste0("TF_DE_selected_comparisons.xlsx")))
+  save(dge_results_all, file=file.path(data_storage_folder, paste0("TF_DE_selected_comparisons.Rdata")) )
+
+} else {
+  load(file=file.path(data_storage_folder, paste0("TF_DE_selected_comparisons.Rdata")))
+}
+
+# if(rerun_analyses) {
+# 
+#   dge_results = compute_DGE(sel_dds, target_suffix="_CCl4", control_suffix= "_untreated", group_parameter = "tissue", sel_celltypes = )
+#   
+#   save(dge_results, file=file.path(data_storage_folder, paste0("DGE_", title, "_all_celltypes.Rdata")) )
+#   
+#   dge_results_all = do.call(rbind, dge_results)
+#   dge_results_all = dge_results_all[order(dge_results_all$celltype, -dge_results_all$avg_diff_relative), ]    
+#   dge_results_all = subset(dge_results_all, abs(avg_diff_relative)> 0.05)
+#   write_xlsx(dge_results_all, file.path(result_folder, paste0("DGE_",title,"_all_celltypes_combined_analysis.xlsx")))
+# 
+# } else {
+#   load(file.path(data_storage_folder, paste0("DGE_", title, "_all_celltypes.Rdata")))
+# }
+
+```
+
+
+<!-- ### Percentage of cells with detected activity of top 5 differentially expressed TF in each cell type -->
+
+<!-- ```{r, fig.width=16, fig.height=14} -->
+<!-- top_5_markers = unique(unlist(tapply(dge_results_all$GeneSymbol, dge_results_all$celltype, head, 5))) -->
+<!-- DotPlot(sel_dds, features = top_5_markers , dot.scale = 8, cols = "RdYlGn",  assay = "RNA") +    RotatedAxis() -->
+<!-- ``` -->
+
+### Top 10 DE genes from each cluster
+
+#### Raw differences
+
+```{r, fig.width=12, fig.height=6}
+plot_top_genes(scData, dge_results_all, "Top TF DE")
+```
+
+#### Relative differences compared to respective TF activity range across all cells
+
+```{r, fig.width=12, fig.height=6}
+plot_top_genes_rel(scData, dge_results_all, "Top TF DE")
+```
+
+
+
+<!-- # Export -->
+
+<!-- Single cell data including the PySCENIC TF actitivity estimates in assay **pyscenic** is exported as file *scData_MoMF.DC_v3_with_progenitors_cluster_annotated_and_pyscenic.RData* . -->
+
+<!-- ```{r} -->
+<!-- save(scData, file=file.path(data_storage_folder, "scData_MoMF.DC_v3_with_progenitors_cluster_annotated_and_pyscenic.RData")) -->
+<!-- ``` -->
+
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

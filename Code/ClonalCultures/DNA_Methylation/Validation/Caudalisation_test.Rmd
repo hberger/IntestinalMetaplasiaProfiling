@@ -1,0 +1,355 @@
+---
+title: "Caudalisation test"
+output: html_document
+date: "2024-07-05"
+---
+
+
+```{r}
+library(ggplot2)
+library(data.table)
+library(RColorBrewer)
+```
+
+
+```{r}
+#d <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM.rds")
+#d <- lapply(d, function(x) subset(x, !is.na(ilmn_id)))
+#saveRDS(d, "../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM_EPIC_only.rds", compress=T)
+d <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_gut_DM_EPIC_only.rds")
+```
+
+```{r}
+up_down <- lapply(d, function(x) { up = subset(x, adj.P.Val < 0.05 & logFC > 0.2 ); down = subset(x, adj.P.Val < 0.05 & logFC < -0.2 )  ; return(list(up = up, down = down))} )
+lapply(up_down, function(x) {return(c(nrow(x$up), nrow(x$down)))})
+```
+
+
+
+```{r}
+load("../../../../Data/Processed/All_Methylation_Validation_DS.RData")
+```
+
+
+```{r}
+all_ds = list(ds_KFR_IM, ds_evCC, ds_evPC, ds_gomez, ds_huang, ds_healthy, ds_wgs)
+```
+
+```{r}
+breaksList = seq(0, 1, by = 0.01)
+new_colors = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList))
+
+sites_ordered = c("Fundus","Corpus","Antrum/Corpus","Antrum","Small intestine","Right Colon", "Left Colon")
+cond_ordered = c("Healthy stomach","Non-IM","IM", "Healthy intestine")
+
+cohorts_ordered = c("This study, ex-vivo clonal","This study, ex-vivo polyclonal","Fritsche et al. ex-vivo PC","Gomez et al. biopsies","Huang et al. biopsies","Healthy_stomach","WGBS")
+```
+
+```{r}
+# we assume that the annotation tables are already sorted by chromosome and CpG position
+extract_subtables <- function(ds, cpgs) {
+  cpg_ids = sapply(ds, function(x) {rownames(x$anno)})
+
+  id_cnts = table(unlist(cpg_ids))
+  shared_ids = names(id_cnts)[id_cnts==length(cpg_ids)]
+  
+  
+  # row_anno = ds[[1]][["anno"]][shared_ids,]
+  # row_anno = row_anno[order(row_anno$CHR, row_anno$MAPINFO),]
+  # shared_ids = rownames(row_anno)
+    
+  sel_ids <- cpgs[cpgs %in% shared_ids]
+  row_anno <- ds[[1]][["anno"]][sel_ids,]
+  matrices =  lapply(ds, function(x) x[["mat"]][sel_ids,] )
+  
+  combined_matrices = do.call(cbind, matrices)
+  
+  combined_ed = do.call(rbind, lapply(ds, function(x) x[["ed"]]))
+  combined_ed$Condition = factor(combined_ed$Condition, levels=cond_ordered)
+  combined_ed$Cohort = factor(combined_ed$Cohort, levels=cohorts_ordered)
+  combined_ed$Site = factor(combined_ed$Site, levels=sites_ordered)
+  combined_ed = combined_ed[order(combined_ed$Cohort, combined_ed$Condition, combined_ed$Site, combined_ed$SampleID),]
+  
+  combined_matrices = combined_matrices[, combined_ed$SampleID]
+  
+  return(list(combined_matrices, combined_ed, row_anno))
+} 
+  
+```
+
+# SVD
+
+## All up/down intestine/stomach CpGs
+
+
+```{r}
+hyper_cpg <- up_down$Colon_vs_StoAntrum$up$ilmn_id
+hypo_cpg <- up_down$Colon_vs_StoAntrum$down$ilmn_id
+rr = extract_subtables(all_ds, c(hyper_cpg, hypo_cpg))
+mat = rr[[1]]
+ed = rr[[2]]
+anno = rr[[3]]
+```
+
+
+```{r, fig.width=8, fig.height=6}
+s <- svd(mat)
+gg = ed[colnames(mat), "Site"]
+plot(s$v[,1], s$v[, 2], type="n")
+text(s$v[,1], s$v[, 2],labels = colnames(mat), col = as.numeric(gg))
+legend("topleft", legend = levels(gg), fill=1:length(levels(gg)))
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+hyper_mat =  mat[hyper_cpg[hyper_cpg %in% rownames(mat)], ]
+hypo_mat =  mat[hypo_cpg[hypo_cpg %in% rownames(mat)], ]
+
+hypo_score = colMeans(hypo_mat)
+hyper_score = colMeans(hyper_mat)
+
+gg = ed[names(hypo_score), "Site"]
+
+res_scores <- data.frame(hypo_score = hypo_score, hyper_score = hyper_score, Site = gg, sample=names(hypo_score))
+res_scores$Cohort = ed[res_scores$sample, "Cohort"]
+res_scores$Condition = ed[res_scores$sample, "Condition"]
+
+with(res_scores, plot(hypo_score, hyper_score, type="n"))
+with(res_scores, text(hypo_score, hyper_score, labels = sample, col= as.numeric(Site)) )
+with(res_scores, legend("bottomleft", legend = levels(Site), fill=1:length(levels(Site))))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_boxplot() + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_boxplot() + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+
+
+```{r, fig.width=10}
+tmp <- res_scores[order(res_scores$hypo_score, decreasing = T),]
+barplot(tmp$hypo_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hypo_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+
+
+tmp <- res_scores[order(res_scores$hyper_score, decreasing = T),]
+barplot(tmp$hyper_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hyper_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+```
+
+
+## Non-body up/down CpGs
+
+```{r}
+
+hyper_cpg_non_body <- subset(anno[rownames(anno) %in% hyper_cpg, ], feature != "Body") |> rownames()
+hypo_cpg_non_body <- subset(anno[rownames(anno) %in% hypo_cpg, ], feature != "Body") |> rownames()
+```
+
+
+
+```{r, fig.width=8, fig.height=6}
+s <- svd(mat[c(hyper_cpg_non_body, hypo_cpg_non_body),])
+gg = ed[colnames(mat), "Site"]
+plot(s$v[,1], s$v[, 2], type="n")
+text(s$v[,1], s$v[, 2],labels = colnames(mat), col = as.numeric(gg))
+legend("topleft", legend = levels(gg), fill=1:length(levels(gg)))
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+hyper_mat =  mat[hyper_cpg_non_body[hyper_cpg_non_body %in% rownames(mat)], ]
+hypo_mat =  mat[hypo_cpg_non_body[hypo_cpg_non_body %in% rownames(mat)], ]
+
+hypo_score = colMeans(hypo_mat)
+hyper_score = colMeans(hyper_mat)
+
+gg = ed[names(hypo_score), "Site"]
+
+res_scores <- data.frame(hypo_score = hypo_score, hyper_score = hyper_score, Site = gg, sample=names(hypo_score))
+res_scores$Cohort = ed[res_scores$sample, "Cohort"]
+res_scores$Condition = ed[res_scores$sample, "Condition"]
+
+with(res_scores, plot(hypo_score, hyper_score, type="n"))
+with(res_scores, text(hypo_score, hyper_score, labels = sample, col= as.numeric(Site)) )
+with(res_scores, legend("bottomleft", legend = levels(Site), fill=1:length(levels(Site))))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_boxplot() + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_boxplot() + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+
+
+```{r, fig.width=10}
+tmp <- res_scores[order(res_scores$hypo_score, decreasing = T),]
+barplot(tmp$hypo_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hypo_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+
+
+tmp <- res_scores[order(res_scores$hyper_score, decreasing = T),]
+barplot(tmp$hyper_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hyper_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+```
+
+
+## All up/down antrum/corpus CpGs
+
+
+```{r}
+hyper_cpg <- up_down$StoCorpus_vs_StoAntrum$up$ilmn_id
+hypo_cpg <- up_down$StoCorpus_vs_StoAntrum$down$ilmn_id
+rr = extract_subtables(all_ds, c(hyper_cpg, hypo_cpg))
+mat = rr[[1]]
+ed = rr[[2]]
+anno = rr[[3]]
+```
+
+
+```{r, fig.width=8, fig.height=6}
+s <- svd(mat)
+gg = ed[colnames(mat), "Site"]
+plot(s$v[,1], s$v[, 2], type="n")
+text(s$v[,1], s$v[, 2],labels = colnames(mat), col = as.numeric(gg))
+legend("bottomright", legend = levels(gg), fill=1:length(levels(gg)))
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+hyper_mat =  mat[hyper_cpg[hyper_cpg %in% rownames(mat)], ]
+hypo_mat =  mat[hypo_cpg[hypo_cpg %in% rownames(mat)], ]
+
+hypo_score = colMeans(hypo_mat)
+hyper_score = colMeans(hyper_mat)
+
+gg = ed[names(hypo_score), "Site"]
+
+res_scores <- data.frame(hypo_score = hypo_score, hyper_score = hyper_score, Site = gg, sample=names(hypo_score))
+res_scores$Cohort = ed[res_scores$sample, "Cohort"]
+res_scores$Condition = ed[res_scores$sample, "Condition"]
+
+# with(res_scores, plot(hypo_score, hyper_score, type="n"))
+# with(res_scores, text(hypo_score, hyper_score, labels = sample, col= as.numeric(Site)) )
+# with(res_scores, legend("bottomleft", legend = levels(Site), fill=1:length(levels(Site))))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_boxplot() + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+#ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_boxplot() + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+#ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+
+```{r, fig.width=10}
+tmp <- res_scores[order(res_scores$hypo_score, decreasing = T),]
+barplot(tmp$hypo_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hypo_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+
+
+# tmp <- res_scores[order(res_scores$hyper_score, decreasing = T),]
+# barplot(tmp$hyper_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+# legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+# barplot(tmp$hyper_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+# legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+```
+
+## All up/down antrum/corpus CpGs from KFR
+
+
+```{r}
+kfr_antrum_corpus = readxl::read_excel("../../../../Data/ExtData/Fritsche_et_al_stomach_methylation/13148_2022_1406_MOESM7_ESM.xlsx", sheet = "Antrum vs. Corpus")
+```
+
+
+```{r}
+hyper_cpg <- subset(kfr_antrum_corpus, logFC > 0)$Row.names
+hypo_cpg <- subset(kfr_antrum_corpus, logFC < 0)$Row.names
+rr = extract_subtables(all_ds, c(hyper_cpg, hypo_cpg))
+mat = rr[[1]]
+ed = rr[[2]]
+anno = rr[[3]]
+```
+
+
+```{r, fig.width=8, fig.height=6}
+s <- svd(mat)
+gg = ed[colnames(mat), "Site"]
+plot(s$v[,1], s$v[, 2], type="n")
+text(s$v[,1], s$v[, 2],labels = colnames(mat), col = as.numeric(gg))
+legend("bottomright", legend = levels(gg), fill=1:length(levels(gg)))
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+hyper_mat =  mat[hyper_cpg[hyper_cpg %in% rownames(mat)], ]
+hypo_mat =  mat[hypo_cpg[hypo_cpg %in% rownames(mat)], ]
+
+hypo_score = colMeans(hypo_mat)
+hyper_score = colMeans(hyper_mat)
+
+gg = ed[names(hypo_score), "Site"]
+
+res_scores <- data.frame(hypo_score = hypo_score, hyper_score = hyper_score, Site = gg, sample=names(hypo_score))
+res_scores$Cohort = ed[res_scores$sample, "Cohort"]
+res_scores$Condition = ed[res_scores$sample, "Condition"]
+
+with(res_scores, plot(hypo_score, hyper_score, type="n"))
+with(res_scores, text(hypo_score, hyper_score, labels = sample, col= as.numeric(Site)) )
+with(res_scores, legend("bottomleft", legend = levels(Site), fill=1:length(levels(Site))))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_boxplot() + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_boxplot() + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, fig.height=6, fig.width=8}
+ggplot(res_scores, aes(x=Condition, fill=Cohort, y=hypo_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Site) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+ggplot(res_scores, aes(x=Site, fill=Cohort, y=hyper_score)) + geom_bar(stat="identity", position="dodge") + xlab("") + facet_wrap(~Condition) + theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+
+
+```{r, fig.width=10}
+tmp <- res_scores[order(res_scores$hypo_score, decreasing = T),]
+barplot(tmp$hypo_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hypo_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+
+
+tmp <- res_scores[order(res_scores$hyper_score, decreasing = T),]
+barplot(tmp$hyper_score, col=as.numeric(tmp$Site), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Site), fill=1:length(unique(tmp$Site)))
+barplot(tmp$hyper_score, col=as.numeric(tmp$Condition), names.arg = tmp$sample, las=2)
+legend("topright", legend = levels(tmp$Condition), fill=1:length(unique(tmp$Condition)))
+```

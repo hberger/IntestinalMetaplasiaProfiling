@@ -1,0 +1,242 @@
+---
+title: "Stomach Methylation - Differential Methylation Analysis, Huang et al."
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+library(plyr)
+library(writexl)
+
+library(limma)
+
+result_folder = paste("../../../Results/Huang",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../Data/Processed/Huang"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+rerun_DGE = T
+
+```
+
+
+# Experimental Design
+
+Data from Huang et al. (GSE103186) was used (450k Illumina Infinium BeadArray).
+
+
+To analyse the generated data in R, I will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013] and use limma for differential methylation analysis
+
+# Data Import
+
+Raw intensity values were preprocessed and QC checked (see "Preprocessing_and_QC.Rmd"). Here I load the sample annotation and the normalized (SWAN) beta values:
+
+```{r Data Import, message=FALSE}
+
+load(file.path(data_storage_folder, "myLoad.RData"))
+
+load(file.path(data_storage_folder, "myNorm.RData"))
+
+
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+full_anno = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19, "Other")
+
+#full_anno = full_anno[, c("UCSC_RefGene_Name", "UCSC_RefGene_Accession", "UCSC_RefGene_Group", "Phantom5_Enhancers", "DMR", "X450k_Enhancer", "Regulatory_Feature_Group", "GencodeCompV12_NAME", "GencodeCompV12_Accession", "GencodeCompV12_Group", "DNase_Hypersensitivity_NAME", "DNase_Hypersensitivity_Evidence_Count", "OpenChromatin_NAME", "OpenChromatin_Evidence_Count", "TFBS_NAME", "TFBS_Evidence_Count")]
+
+full_anno <- full_anno[, !colnames(full_anno) %in% c("Forward_Sequence","SourceSeq","Random_Loci","Methyl27_Loci")]
+```
+
+Here, I now subset the normalized data set, in order to remove all CpGs that between all samples do not change > 20 %.
+
+```{r}
+myNorm_sub = myNorm
+
+Diff = rowDiffs(matrixStats::rowRanges(myNorm_sub))
+
+#myNorm_sub = cbind(myNorm_sub, Diff)
+#colnames(myNorm_sub)[ncol(myNorm_sub)] = "MaxDiff"  
+myNorm_sub = subset(myNorm_sub, Diff > 0.2)
+ed = myLoad$pd
+## 62,574
+```
+# Samples
+
+```{r}
+table(myLoad$pd$Site, myLoad$pd$Sample_Group)
+```
+
+```{r}
+cc <- cor(myNorm_sub, method="spearman")
+rownames(cc) <- paste0(ed[rownames(cc), "Site"], "_", ed[rownames(cc), "Sample_Group"])
+pheatmap(cc, main="Correlation on probes with beta range > 0.2", show_rownames = F, show_colnames = F)
+```
+
+
+
+# Differential Methylation Analysis
+
+The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015] and the subsetted data set:
+
+  - IM Antrum vs. Normal Antrum
+
+```{r Differential Methylation Analysis}
+
+if(rerun_DGE) {
+  
+  all_results_betas = list()
+  
+  data_matrix = myNorm_sub
+  ed = myLoad$pd
+  
+  
+  # IM vs. IM, patients 592 and 594, all replicates as full samples
+  sel_conditions = c("IM","Normal")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions & Site == "Antrum"))
+  edata = data_matrix[,sel_samples]
+  group = factor(ed[sel_samples,]$Sample_Group)
+  #patient = factor(ed[sel_samples,]$PatientID)
+  
+  design = model.matrix(~ group ,  contrasts.arg=list(group=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["IMvsNonIM_Antrum"]] = topTable(fit, coef="group1", adjust="BH", number=nrow(edata))
+  
+# 
+#   # IM vs. non-IM, patients 592 and 594, patient modeled as blocking factor
+#   sel_conditions = c("IM","non-IM")
+#   sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions & PatientID %in% c("592","594")))
+#   edata = data_matrix[,sel_samples]
+#   groups = factor(ed[sel_samples,]$Sample_Group)
+#   patient = factor(ed[sel_samples,]$PatientID)
+# 
+#   patient_group = paste0(patient,"_",groups)
+#   
+#   edata_avg = avearrays(edata, ID=patient_group)
+#   groups = factor(unlist(sapply(strsplit(colnames(edata_avg),"_"), `[`,2)))
+#   patient = factor(unlist(sapply(strsplit(colnames(edata_avg),"_"), `[`,1)))
+#     
+#   design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+#   
+#   fit <- lmFit(edata_avg,design)
+#   fit <- eBayes(fit)
+#   all_results_betas[["IMvsNonIM_592_594_avg_by_patient"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+# 
+# 
+#   # IM vs. non-IM, patients 592 and 594, replicates averaged
+#   design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
+#   
+#   fit <- lmFit(edata_avg,design)
+#   fit <- eBayes(fit)
+#   all_results_betas[["IMvsNonIM_592_594_avg"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+# 
+#   
+#     
+#   # IM vs. IM, patient 592
+#   sel_conditions = c("IM","non-IM")
+#   sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions & PatientID %in% c("592")))
+#   edata = data_matrix[,sel_samples]
+#   groups = factor(ed[sel_samples,]$Sample_Group)
+#   #patient = factor(ed[sel_samples,]$PatientID)
+#   
+#   design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
+#   
+#   fit <- lmFit(edata,design)
+#   fit <- eBayes(fit)
+#   all_results_betas[["IMvsNonIM_592"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+# 
+# 
+#   # IM vs. IM, patient 594
+#   sel_conditions = c("IM","non-IM")
+#   sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions & PatientID %in% c("594")))
+#   edata = data_matrix[,sel_samples]
+#   groups = factor(ed[sel_samples,]$Sample_Group)
+#   #patient = factor(ed[sel_samples,]$PatientID)
+#   
+#   design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.SAS))
+#   
+#   fit <- lmFit(edata,design)
+#   fit <- eBayes(fit)
+#   all_results_betas[["IMvsNonIM_594"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+# 
+# 
+  sel_samples = colnames(data_matrix)
+
+  group = factor(ed[sel_samples,]$Sample_Group)
+  # patient = factor(ed[sel_samples,]$PatientID)
+
+  # patient_group = paste0(groups,"_",patient)
+
+  myNorm_sub_avg = avearrays(data_matrix[,sel_samples], ID=group)
+  myNorm_sub_avg = myNorm_sub_avg[, order(colnames(myNorm_sub_avg))]
+  colnames(myNorm_sub_avg) = paste0(colnames(myNorm_sub_avg), "_avg")
+#   
+#   #groups = factor(unlist(sapply(strsplit(colnames(),"_"), `[`,2)))
+#   #patient = factor(unlist(sapply(strsplit(colnames(edata_avg),"_"), `[`,1)))
+
+  all_results_betas_annotated = list()
+  for (n in names(all_results_betas)) {
+    tmp = all_results_betas[[n]]
+    tmp = merge(tmp, myNorm_sub_avg, by=0, all.x=T, sort=F)
+    tmp = merge(tmp, as.data.frame(full_anno), by.x="Row.names", by.y=0, sort=F, all.x=T )
+    all_results_betas_annotated[[n]] = tmp
+  }
+        
+  save(all_results_betas_annotated, file=file.path(data_storage_folder, "all_results_betas_IM_nonIM_annotated.RData"))
+} else {
+  load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_annotated.RData"))
+}
+```
+
+## Volcano Plots
+
+### Subgroups
+
+For each comparison, the distribution of the differential methylation values (delta beta) and the negative logarithm of the adjusted p-values are plotted in the following volcano plots. The red line marks the cutoff of 0.05 of the FDR.
+
+#### FDR < 5%
+
+```{r Volcano Plots adj. p-val, fig.width=12,fig.height = 7.5}
+all_target_conditions = names(all_results_betas_annotated)
+par(mfrow=c(2,2))
+for (tc in all_target_conditions) {
+  r = all_results_betas_annotated[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.05),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+# Result files
+
+Results have been written to file *Differential_Methylation_Results.xlsx* in `r result_folder`.
+
+```{r}
+write_xlsx(all_results_betas_annotated, path = file.path(result_folder, "Differential_Methylation_Results_IM_nonIM.xlsx"))
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

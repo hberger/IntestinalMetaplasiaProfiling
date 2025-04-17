@@ -21,6 +21,7 @@ library(data.table)
 library(VennDiagram)
 futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
 library(grid)
+library(pheatmap)
 
 data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
 ```
@@ -46,7 +47,7 @@ cpg_pos_epic_ranges <- with(cpg_pos_epic, GRanges(chr, IRanges(start=pos, end=po
   - DM sites between Colon and Antrum or SI and Antrum
 
 ```{r}
-all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/ClonalCultures/DNAm/WGS_gut_DM.rds")
+all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/WGBS/WGS_gut_DM.rds")
 
 # wgs_sig <- lapply(all_results_beta_annotated_wgs, function(x) {
 #   x <- subset(x, adj.P.Val < 0.05 & abs(logFC) > 0.2)
@@ -54,10 +55,17 @@ all_results_beta_annotated_wgs <- readRDS("../../../../Data/Processed/ClonalCult
 #   return(x)
 # })
 
+# wgs_all_ilmn <- lapply(all_results_beta_annotated_wgs, function(x) {
+#   x <- subset(x, !is.na(ilmn_id))
+#   x$dge_class <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(x$logFC > 0, ifelse(x$logFC > 0.2, "hyper", "hyper_weak"), ifelse(x$logFC < -0.2, "hypo", "hypo_weak")))
+#   x$direction <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(abs(x$logFC) < 0.2, "nc/weak", ifelse(x$logFC > 0.2, "hyper", "hypo")))
+#   return(x)
+# })
+
 wgs_all_ilmn <- lapply(all_results_beta_annotated_wgs, function(x) {
   x <- subset(x, !is.na(ilmn_id))
   x$dge_class <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(x$logFC > 0, ifelse(x$logFC > 0.2, "hyper", "hyper_weak"), ifelse(x$logFC < -0.2, "hypo", "hypo_weak")))
-  x$direction <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(abs(x$logFC) < 0.2, "nc/weak", ifelse(x$logFC > 0.2, "hyper", "hypo")))
+  x$direction <- ifelse(x$adj.P.Val > 0.05, "ns", ifelse(x$logFC > 0, "hyper", "hypo"))
   return(x)
 })
 ```
@@ -71,6 +79,7 @@ See DGE_Result_Overview.html for definitions of hyper/hypomethylated CpG cutoff 
 ```{r}
 load(file.path(data_storage_folder, "Methylation_DM_lists.Rdata"))
 ```
+
 
 ## Hyper-CpGs
 
@@ -142,21 +151,26 @@ for (n in names(wgs_all_ilmn)) {
 ```
 
 
-```{r, fig.width=8, fig.height=4}
+```{r, fig.width=8, fig.height=6}
 for (n in names(all_ovlp_wgs)) {
-  m <- with(all_ovlp_wgs[[n]], table(direction_im, dge_class, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
+  m <- with(all_ovlp_wgs[[n]], table(direction_im, direction, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
   print(m)
   prop.table(m, margin=1) |> pheatmap::pheatmap(cluster_cols=F, cluster_rows=F, main=paste0("DM IM vs. healthy (rows) vs. WGS ", n, " (cols)")) |> print()
-  prop.table(m, margin=2) |> round(digits = 3) |> print()
+  prop.table(m, margin=1) |> round(digits = 3) |> print()
+  csq <- chisq.test(m)
+  csq.res <- csq$residuals |> as.matrix()
+  print(csq)
+  print(csq.res)
+  pheatmap(csq.res[c("hyper","ns","hypo"), c("hyper","ns","hypo")], cluster_cols = F, cluster_rows=F, breaks = seq(-qchisq(0.95, 4), qchisq(0.95, 4), length.out = 100), main=n )
+  assocplot(m, main=n)
 }
-
 ```
 
 
 ### CpGs DM in IM vs. healthy (new samples + healthy)
 
 ```{r}
-comp = "IM_vs_nonIM_with_healthy"
+comp = "IM_vs_healthy"
 ```
 
 
@@ -209,24 +223,102 @@ for (n in names(wgs_all_ilmn)) {
 ```
 
 
-```{r, fig.width=8, fig.height=4}
+
+
+```{r, fig.width=8, fig.height=6}
 for (n in names(all_ovlp_wgs)) {
-  m <- with(all_ovlp_wgs[[n]], table(direction_im, dge_class, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
+  m <- with(all_ovlp_wgs[[n]], table(direction_im, direction, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
   print(m)
   prop.table(m, margin=1) |> pheatmap::pheatmap(cluster_cols=F, cluster_rows=F, main=paste0("DM IM vs. healthy (rows) vs. WGS ", n, " (cols)")) |> print()
-  prop.table(m, margin=2) |> round(digits = 3) |> print()
+  prop.table(m, margin=1) |> round(digits = 3) |> print()
+  csq <- chisq.test(m)
+  csq.res <- csq$residuals |> as.matrix()
+  print(csq)
+  print(csq.res)
+  pheatmap(csq.res[c("hyper","ns","hypo"), c("hyper","ns","hypo")], cluster_cols = F, cluster_rows=F, breaks = seq(-qchisq(0.95, 4), qchisq(0.95, 4), length.out = 100), main=n )
+  assocplot(m, main=n)
+}
+```
+
+
+### CpGs DM in IM vs. healthy (new samples + healthy)
+
+```{r}
+comp = "nonIM_vs_healthy"
+```
+
+
+```{r}
+all_ovlp_hyper <- list()
+all_ovlp_hypo <- list()
+
+for (n in names(wgs_all_ilmn)) {
+  tmp <- wgs_all_ilmn[[n]]
+  tmp$comparison_wgs <- n
+  all_ovlp_hyper[[n]] <- merge(all_hyper_cpg[[comp]], tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+  all_ovlp_hypo[[n]] <- merge(all_hypo_cpg[[comp]], tmp, by.x="Row.names", by.y="ilmn_id", all.x=T, sort=F)
+}
+
+all_ovlp_hyper_df <- do.call(rbind, all_ovlp_hyper)
+all_ovlp_hypo_df <- do.call(rbind, all_ovlp_hypo)
+```
+
+
+
+```{r}
+table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$direction, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+```
+
+
+```{r}
+table(all_ovlp_hyper_df$comparison_wgs, all_ovlp_hyper_df$dge_class, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypermethylated CpG"))
+table(all_ovlp_hypo_df$comparison_wgs, all_ovlp_hypo_df$dge_class, useNA = "ifany", dnn=c("Comparison", "direction in WGS within IM-hypomethylated CpG"))
+```
+
+
+#### CpGs DM in WGS colon/SI vs. stomach compared to IM DM CpGs
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+```
+
+
+```{r}
+all_ovlp_wgs <- list()
+
+for (n in names(wgs_all_ilmn)) {
+  tmp <- wgs_all_ilmn[[n]]
+  tmp$comparison_wgs <- n
+  all_ovlp_wgs[[n]] <- merge(dm_im, tmp, by.x="Row.names", by.y="ilmn_id", all.y=T, sort=F)
+  all_ovlp_wgs[[n]]$direction_im <- ifelse(is.na(all_ovlp_wgs[[n]]$direction_im), "ns",all_ovlp_wgs[[n]]$direction_im)
 }
 
 ```
 
+
+```{r, fig.width=8, fig.height=6}
+for (n in names(all_ovlp_wgs)) {
+  m <- with(all_ovlp_wgs[[n]], table(direction_im, direction, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
+  print(m)
+  prop.table(m, margin=1) |> pheatmap::pheatmap(cluster_cols=F, cluster_rows=F, main=paste0("DM IM vs. healthy (rows) vs. WGS ", n, " (cols)")) |> print()
+  prop.table(m, margin=1) |> round(digits = 3) |> print()
+  csq <- chisq.test(m)
+  csq.res <- csq$residuals |> as.matrix()
+  print(csq)
+  print(csq.res)
+  pheatmap(csq.res[c("hyper","ns","hypo"), c("hyper","ns","hypo")], cluster_cols = F, cluster_rows=F, breaks = seq(-qchisq(0.95, 4), qchisq(0.95, 4), length.out = 100), main=n )
+  assocplot(m, main=n)
+}
+```
 
 
 ### CpGs DM in IM vs. healthy (new samples + healthy + 450k IM samples)
 
 ```{r}
-comp = "IM_vs_nonIM_with_healthy_450k_and_EPIC"
+comp = "IM_vs_healthy_450k_and_EPIC"
 ```
-
 
 ```{r}
 all_ovlp_hyper <- list()
@@ -277,12 +369,17 @@ for (n in names(wgs_all_ilmn)) {
 ```
 
 
-```{r, fig.width=8, fig.height=4}
+```{r, fig.width=8, fig.height=6}
 for (n in names(all_ovlp_wgs)) {
-  m <- with(all_ovlp_wgs[[n]], table(direction_im, dge_class, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
+  m <- with(all_ovlp_wgs[[n]], table(direction_im, direction, dnn=c("DM IM vs. healthy", paste0("DM WGS ", n)))) 
   print(m)
   prop.table(m, margin=1) |> pheatmap::pheatmap(cluster_cols=F, cluster_rows=F, main=paste0("DM IM vs. healthy (rows) vs. WGS ", n, " (cols)")) |> print()
-  prop.table(m, margin=2) |> round(digits = 3) |> print()
+  prop.table(m, margin=1) |> round(digits = 3) |> print()
+  csq <- chisq.test(m)
+  csq.res <- csq$residuals |> as.matrix()
+  print(csq)
+  print(csq.res)
+  pheatmap(csq.res[c("hyper","ns","hypo"), c("hyper","ns","hypo")], cluster_cols = F, cluster_rows=F, breaks = seq(-qchisq(0.95, 4), qchisq(0.95, 4), length.out = 100), main=n )
+  assocplot(m, main=n)
 }
-
 ```

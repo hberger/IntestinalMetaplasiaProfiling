@@ -165,3 +165,27 @@ ggplot(tmp_avg, aes(x=Condition, col=Condition, y = Score)) +
   stat_compare_means(method="t.test", aes(label = paste0(..p.signif..," (p=",..p.format..,")")), label.y = c(ymax*.85, ymax*1.05, ymax*.6), label.x = 1:5, comparisons = list(c("IM","Non-IM"), c("IM","Normal Antrum"), c("Non-IM","Normal Antrum"))) + 
   ylab("GSVA score")
 ```
+
+
+
+```{r, fig.width=5, fig.height=4}
+cohort_order <- c("Normal Antrum", "Non-IM","IM","Duodenum","Colon")
+tmp <- subset(rr_ts, !Sample %in% c("4039_Y","4446_P","4446_Q","4446_R","4446_S") & Cluster %in% c("TA/Colonocyte 1") ) |> as.data.table()
+
+tmp$Patient <- ifelse(tmp$Condition=="Normal Antrum", tmp$Library.Name, tmp$Patient)
+tmp_avg <- tmp[, .(Score = mean(Score, na.rm=T)), by=c("Condition","Patient","Cluster")]
+tmp_avg$Condition <- factor(tmp_avg$Condition, levels=cohort_order)
+ymax = max(tmp_avg$Score, na.rm=T)
+ymin = min(tmp_avg$Score, na.rm=T)
+ggplot(tmp_avg, aes(x=Condition, col=Condition, y = Score)) + 
+  #geom_boxplot() + 
+  stat_summary() + 
+  geom_point() + 
+  facet_wrap(~Cluster) + 
+  geom_hline(yintercept=0, lty=2) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("TA/Colonocyte 1 Score") + 
+  coord_cartesian(ylim=c(ymin, ymax*1.2)) + 
+  stat_compare_means(method="t.test", aes(label = paste0(..p.signif..," (p=",..p.format..,")")), label.y = c(ymax*.85, ymax*1.05, ymax*.6), label.x = 1:5, comparisons = list(c("IM","Non-IM"), c("IM","Normal Antrum"), c("Non-IM","Normal Antrum"))) + 
+  ylab("GSVA score")
+```

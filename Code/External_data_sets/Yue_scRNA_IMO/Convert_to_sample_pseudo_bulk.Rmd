@@ -1,0 +1,138 @@
+---
+title: "Sample pseudo bulk, Yue et al IMO"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, message=FALSE}
+rm(list=ls())
+library(Seurat)
+library(ggplot2)
+
+library(readxl)
+library(writexl)
+library(knitr)
+library(data.table)
+library(cowplot)
+library(EnhancedVolcano)
+library(pheatmap)
+
+
+library(DESeq2)
+
+library(future)
+options(future.globals.maxSize=10*2**32)
+plan("multisession", workers = 8)
+
+source("../../Utils/Dotplot_scRNA_v2.2.R")
+
+result_folder = "../../../../Results/Yue_scRNA_IMO/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../Data/ExtData/Yue_scRNA_IMO"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+rerun_analyses = F
+```
+
+
+```{r}
+scData.combined <- readRDS(file.path(data_storage_folder, "Yue_IMO_Harmony.rds"))
+```
+
+```{r}
+tmp <- AggregateExpression(scData.combined, assays = "RNA", group.by="orig.ident", slot = "counts")$RNA
+
+ed <- unique(scData.combined@meta.data[, c("orig.ident","sample_label","Condition","tissue_type")])
+ed <- lapply(ed, function(x) gsub("-", "wo", fixed=T,gsub("+", "with", fixed=T, x=x))) |> as.data.frame()
+rownames(ed) <- ed$orig.ident 
+
+```
+
+```{r}
+dd <- DESeqDataSetFromMatrix(tmp, ed, ~ Condition)
+
+dd <- DESeq(dd, modelMatrixType = "expanded", betaPrior = T)
+
+all_results <- list()
+
+all_results[["IM_Wnt_vs_Normal_Wnt"]] <- results(object = dd, contrast = c("Condition","IM.organoid.withWnt", "normal.gastric.organoid.withWnt"))
+all_results[["IM_noWnt_vs_Normal_noWnt"]] <- results(object = dd, contrast = c("Condition","IM.organoid.woWnt", "normal.gastric.organoid.woWnt"))
+
+all_results[["SI_Wnt_vs_Normal_Wnt"]] <- results(object = dd, contrast = c("Condition","normal.ileum.organoid.withWnt", "normal.gastric.organoid.withWnt"))
+all_results[["SI_noWnt_vs_Normal_noWnt"]] <- results(object = dd, contrast = c("Condition","normal.ileum.organoid.woWnt", "normal.gastric.organoid.woWnt"))
+
+all_results[["IM_Tissue_vs_Normal_Wnt"]] <- results(object = dd, contrast = c("Condition","IM.tissue.NA", "normal.gastric.organoid.withWnt"))
+all_results[["IM_Tissue_vs_Normal_noWnt"]] <- results(object = dd, contrast = c("Condition","IM.tissue.NA", "normal.gastric.organoid.woWnt"))
+
+# excluded_genes = names(included_genes[!included_genes])
+# cols_in_res_table = colnames(all_results[[1]])
+# empty_cols = do.call(cbind, Map(function(x) rep(NA, length(excluded_genes)), cols_in_res_table ))
+# excluded_gene_tab = data.frame(row.names = excluded_genes, empty_cols )
+
+for (n in names(all_results)) {
+  tmp = all_results[[n]]
+  resOrdered <- data.frame(tmp[order(tmp$pvalue),])
+  #resOrdered = rbind(resOrdered, excluded_gene_tab)
+  resOrdered$padj = ifelse(is.na(resOrdered$padj),1,resOrdered$padj)
+  #res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneSymbol","EntrezID","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  #res_annotated = as.data.frame(merge(resOrdered, gene_anno[,c("Geneid","GeneName")], by.x=0, by.y="Geneid", sort=F))
+  #res_annotated = merge(res_annotated, count_mat, by.x="Row.names",by.y=0, all.x=T, sort=F)
+  resOrdered$GeneSymbol <- rownames(resOrdered)
+  all_results[[n]] = resOrdered
+}
+```
+
+
+### Volcano plots
+
+For each comparison, the distribution of the fold change (on a log2 scale) and adjusted p-value (on reverse logarithmical scale) is shown in a volcano plot. The red line denotes the FDR cutoff of 0.05. 
+
+```{r, DE_volcano, results="hide", fig.width=16,fig.height = 6 }
+all_target_conditions = names(all_results)
+par(mfrow=c(1,3))
+for (tc in names(all_results)) {
+  r = all_results[[tc]]
+  p <- EnhancedVolcano(toptable = r, lab = r$GeneSymbol, x = "log2FoldChange", y = "padj", title = tc, pCutoff = 0.05)
+  # plot(r$log2FoldChange, -log10(r$padj),xlab="log2 Fold Change",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$padj),na.rm=T))))
+  # title(main=tc, sub=paste("(",nrow(subset(r, padj < 0.05))," signif. DE genes)",sep="") )
+  # abline(h=-log10(0.05),col="red")
+  print(p)
+}
+```
+
+```{r}
+saveRDS(all_results, file=file.path(data_storage_folder, "PseudoBulk_DGE_IM_vs_normal.rds"))
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

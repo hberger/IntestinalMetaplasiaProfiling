@@ -1,0 +1,336 @@
+---
+title: "ESGI (MB044) samples: Atrophy, IM, and Normal - Differential Methylation Analysis - CpG level"
+author: "Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Differential_Methylation_CpG_level/")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+setwd("/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Differential_Methylation_CpG_level/")
+
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+#library("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+library(RColorBrewer)
+library(dplyr)
+library(knitr)
+library(VennDiagram)
+```
+
+
+# Experimental Design
+
+Gastric epithelial cells of antrum, corpus and fundus were isolated from sleeve resection tissue and cultivated as organoids. After one to two passages, Air-Liquid-Interface (ALI) culture was started and when cells had developed a completly polarized and sealed monolayer, differentiation was induced by removing Wnt and R-spoding from the cell culture medium for seven days. The so obtained samples are:  
+- Antrum undifferentiated (AU)  
+- Antrum differentiated (AD)  
+- Corpus undifferentiated (CU)  
+- Corpus differentiated (CD)  
+- Fundus undifferentiated (FU)  
+- Fundus differentiated (FD)  
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+In another approach, gastric organoids were grown for 1-2 passages from antral biopsies of two patients (P471, P479), which showed atrophic and metaplastic lesions. The so obtained samples are:
+- Normal  
+- Atrophy  
+- Intestinal metaplasia (IM).
+
+
+This experiment analyses the methylation values of the stomach with respect to the DNA methylation values from the ESGI cohort. For this purpose, the DNA methylation values of differentiated and undifferentiated stomach samples will be averaged per region, in order to allow group comparisons with antrum, corpus and fundus vs the diseased samples.
+
+To analyse the generated data in R, we will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013].
+
+# Data Import
+
+Raw intensity values were preprocessed and QC checked (see "171002_Preprocessing_and_QC_with_Atrophy.Rmd"). Here I load the sample annotation and the normalized (BMIQ) beta values:
+
+```{r Data Import, message=FALSE}
+
+load("/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Preprocessing_and_QC/myNorm.RData")
+load("/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Preprocessing_and_QC/sample_annotation.RData")
+
+data("probe.features")
+
+sample_annotation$Super_group <- c("Normal", "Atrophy", "IM", "Normal", "Atrophy", "IM", rep("Normal", 6), rep("Corpus", 6), rep("Fundus", 6))
+
+if(FALSE){
+  myNorm_anno <- merge(myNorm, probe.features, by=0, sort=F)
+  rownames(myNorm_anno) <- myNorm_anno$Row.names
+  myNorm_anno$Row.names = NULL
+  myNorm_anno_sorted <- myNorm_anno[order(myNorm_anno$CHR, myNorm_anno$MAPINFO),]
+  myNorm_anno_sorted$feat.cgi <-  as.character(myNorm_anno_sorted$feat.cgi)
+  save(myNorm_anno_sorted, file = "myNorm_anno_sorted.RData")
+  
+}else{
+  load("myNorm_anno_sorted.RData")
+}
+```
+
+# Differential Methylation Analysis
+
+The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015]:
+
+- A vs N  
+- IM vs N 
+   
+- A vs Antrum (only ALI samples) --> Here the patient effect could not be taken into account     
+- A vs Normal_Antrum (including normal ESGI samples and antrum)  
+
+- IM vs Antrum (only ALI samples)  --> Here the patient effect could not be taken into account  
+- IM vs Normal_Antrum (inlcuding normal ESGI samples and antrum)  
+
+
+
+```{r Differential Methylation Analysis}
+
+
+
+if(FALSE) {
+  all_results_betas = list()
+  
+  data_matrix = myNorm
+  ed = sample_annotation
+  
+  
+  # A vs Normal
+  sel_conditions = c("Atrophy","Normal")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Atrophy vs. Normal"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+
+  
+  # IM vs Normal
+  sel_conditions = c("IM","Normal")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["IM vs. Normal"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  
+  # Atrophy vs Antrum without normal
+  
+  ### here I had to remove "patient" from the formula, in order to allow linear fit
+  sel_conditions = c("Atrophy","Antrum")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  #patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Atrophy vs. Antrum"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata))  
+  
+  # Atrophy vs Antrum including normal
+  sel_conditions = c("Atrophy","Normal")
+  sel_samples = rownames(subset(ed, Super_group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Super_group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Atrophy vs. Normal_Antrum"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  
+  # IM vs Antrum without normal
+  sel_conditions = c("IM","Antrum")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  #patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["IM vs. Antrum"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata))  
+  
+  # IM vs Antrum including normal
+  sel_conditions = c("IM","Normal")
+  sel_samples = rownames(subset(ed, Super_group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Super_group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["IM vs. Normal_Antrum"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  
+  save(all_results_betas, file="all_results_betas.RData")
+} else {
+  load("all_results_betas.RData")
+}
+
+```
+
+
+For each comparison, a tab seperated .txt file is written and store in the results folder.
+
+
+```{r output}
+
+result_folder = paste("./Results",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data("probe.features")
+
+# Output:
+output_file_prefix = paste(result_folder,"DM_results_", sep="/")
+for (cc in names(all_results_betas)) {
+
+    tmp_results = merge(all_results_betas[[cc]], probe.features, by = 0, all.x=T, sort=F)
+
+  write.table(tmp_results, file=paste(output_file_prefix, cc, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+```
+
+Futhermore, a subsetted version (delta beta > 0.2 or < -0.2 and p < 0.05) is written and stored in the results folder.  
+
+```{r output sub}
+
+
+sub_fun <- function(x) {
+  x[(x$logFC  > 0.2 | x$logFC < -0.2) & x$P.Value < 0.05,]
+}
+
+all_results_betas_sub <- lapply(all_results_betas, sub_fun)
+
+# Output:
+output_file_prefix = paste(result_folder,"DM_results_sub_", sep="/")
+for (cc in names(all_results_betas_sub)) {
+
+    tmp_results = merge(all_results_betas_sub[[cc]], probe.features, by = 0, all.x=T, sort=F)
+
+  write.table(tmp_results, file=paste(output_file_prefix, cc, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+```
+
+
+## Volcano Plots
+
+### With adj. P-value
+
+For each comparison, the distribution of the differential methylation values (delta beta) and the negative logarithm of the adjusted p-values are plotted in the following volcano plots. The red line marks the cutoff of 0.05 of the FDR.
+
+
+```{r Volcano Plots adj. p-val, fig.height=5, fig.width=9}
+
+all_target_conditions = names(all_results_betas)
+par(mfrow=c(2,3))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %))",sep="") )
+  abline(h=-log10(0.05),col="red") 
+}
+
+```
+
+### With raw p-value
+
+For each comparison, the distribution of the differential methylation values (delta beta) and the negative logarithm of the raw p-values are plotted in the following volcano plots.The red line indicates the cutoff of p < 0.05.   
+
+```{r, fig.height=5, fig.width=9}
+
+all_target_conditions = names(all_results_betas)
+par(mfrow=c(2,3))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$P.Value),xlab="delta beta",ylab="-log10(raw p-val)", ylim=c(0,max(2,max(-log10(r$P.Value),na.rm=T))))
+  title(main=tc, sub=paste("(",nrow(subset(r, P.Value < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %))",sep="") )
+  abline(h=-log10(0.05),col="red") 
+}
+
+```
+
+For the comparisons of diseased (atrophy or IM) vs normal antrum, excluding the "normal" ESGI samples, it is not possible to correct for the patient effect. Therefor, from now on, only the comparisons including the "normal" ESGI samples in the vs Antrum comparison will be used for further analysis.  
+
+### Counts of |delta beta| > 0.2 with FDR < 5%
+
+```{r}
+
+val = 0.05
+
+numbers = data.frame("A vs N" = c(nrow(subset(all_results_betas$`Atrophy vs. Normal`, adj.P.Val < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`Atrophy vs. Normal`, adj.P.Val < val & logFC < -0.2))),
+                     "IM vs N" = c(nrow(subset(all_results_betas$`IM vs. Normal`, adj.P.Val < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`IM vs. Normal`, adj.P.Val < val & logFC < -0.2))),
+                     "A vs Antrum" = c(nrow(subset(all_results_betas$`Atrophy vs. Normal_Antrum`, adj.P.Val < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`Atrophy vs. Normal_Antrum`, adj.P.Val < val & logFC < -0.2))),
+                     "IM vs Antrum" = c(nrow(subset(all_results_betas$`IM vs. Normal_Antrum`, adj.P.Val < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`IM vs. Normal_Antrum`, adj.P.Val < val & logFC < -0.2)))
+            )
+
+par(mar = c(5, 4, 4, 7) + 1, xpd=T)
+par(mgp = c(3,1.8,0))
+barplot(as.matrix(numbers), cex.names=0.8, col = c("red", "darkblue"), ylim= c(0, (max(numbers)+100)), beside = T, space = c(0,0.5), ylab="# of DM CpGs \n(FDR < 5 %)", names.arg = c("A vs N", "IM vs N", "A vs Antrum", "IM vs Antrum"), bty="L")
+legend("topright", inset=c(-0.2,0), c("Hyper", "Hypo"), fill = c("red", "darkblue"))
+```
+
+
+### Counts of |delta beta| > 0.2 with raw p-values < 0.05
+
+```{r}
+
+val = 0.05
+
+numbers = data.frame("A vs N" = c(nrow(subset(all_results_betas$`Atrophy vs. Normal`, P.Value < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`Atrophy vs. Normal`, P.Value < val & logFC < -0.2))),
+                     "IM vs N" = c(nrow(subset(all_results_betas$`IM vs. Normal`, P.Value < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`IM vs. Normal`, P.Value < val & logFC < -0.2))),
+                     "A vs Antrum" = c(nrow(subset(all_results_betas$`Atrophy vs. Normal_Antrum`, P.Value < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`Atrophy vs. Normal_Antrum`, P.Value < val & logFC < -0.2))),
+                     "IM vs Antrum" = c(nrow(subset(all_results_betas$`IM vs. Normal_Antrum`, P.Value < val & logFC > 0.2)),
+                                    nrow(subset(all_results_betas$`IM vs. Normal_Antrum`, P.Value < val & logFC < -0.2)))
+            )
+
+par(mar = c(5, 4, 4, 7) + 1, xpd=T)
+par(mgp = c(3,1.8,0))
+barplot(as.matrix(numbers), cex.names=0.8, col = c("red", "darkblue"), ylim= c(0, (max(numbers)+100)), beside = T, space = c(0,0.5), ylab="# of DM CpGs \n(p < 0.05)", names.arg = c("A vs N", "IM vs N", "A vs Antrum", "IM vs Antrum"), bty="L")
+legend("topright", inset=c(-0.2,0), c("Hyper", "Hypo"), fill = c("red", "darkblue"))
+```
+
+# Conclusion:
+
+Comparing only diseased vs normal using the two ESGI patients, the FDR is quite high. But filtering for the raw p-value < 0.05 shows a similar ratio of hyper- and hypomethylation as when comparing the diseased ESGI samples with the normal ESGI and the healthy antrum samples.
+
+For subsequent analysis, the comparison including also the healthy antrum samples will be used.  

@@ -32,7 +32,7 @@ if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
 data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm"
 if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
 
-rerun_preprocessing = T
+rerun_preprocessing = F
 ```
 
 # Experimental Design:
@@ -202,6 +202,7 @@ load(file.path(data_storage_folder, "myLoad_IM_nonIM_and_healthy_stomach_combine
 ed <- myLoad$pd |> as.data.frame()
 
 ed[,c("Sample_ID","Sample_Name", "Sample_Group","Project","PatientID", "Stomach_site")]
+#saveRDS(ed, file="../../../../Data/Processed/PolyclonalCultures/DNAm/Sample_Description.rds")
 ```
 
 
@@ -321,7 +322,7 @@ my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = 
 
 ```{r MDS plot, fig.width=6, fig.height=5}
 
-mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$Sample_Name, legendPos = "bottomleft")
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$Sample_Name, legendPos = "topleft")
 
 mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$PatientID, legendPos = "bottomleft")
 

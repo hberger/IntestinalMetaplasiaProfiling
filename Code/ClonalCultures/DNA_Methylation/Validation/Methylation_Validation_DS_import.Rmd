@@ -1,0 +1,451 @@
+---
+title: "Validation of region specific TF gene DNA methylation in stomach IM - data import"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(matrixStats)
+library(pheatmap)
+library(RColorBrewer)
+library(reshape2)
+library(ggplot2)
+library(GenomicRanges)
+library(data.table)
+
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+```
+
+```{r}
+other_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Other") |> as.data.frame()
+loc_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Locations")  |> as.data.frame()
+island_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Islands.UCSC")  |> as.data.frame()
+colnames(loc_anno) <- c("CHR","MAPINFO","STRAND")
+full_anno <- merge(loc_anno, other_anno, by=0, all.x=T, sort=F)
+full_anno <- merge(full_anno, island_anno, by.x="Row.names", by.y=0, all.x=T, sort=F)
+rownames(full_anno) <- full_anno$Row.names
+
+#full_anno = full_anno[, c("UCSC_RefGene_Name", "UCSC_RefGene_Accession", "UCSC_RefGene_Group", "Phantom5_Enhancers", "DMR", "X450k_Enhancer", "Regulatory_Feature_Group", "GencodeCompV12_NAME", "GencodeCompV12_Accession", "GencodeCompV12_Group", "DNase_Hypersensitivity_NAME", "DNase_Hypersensitivity_Evidence_Count", "OpenChromatin_NAME", "OpenChromatin_Evidence_Count", "TFBS_NAME", "TFBS_Evidence_Count")]
+```
+
+
+# Data sets used for validation
+
+  - *in-vivo* data sets
+     - GSE103186 (Huang et al. Cancer Cell 2017). Human IM / non-IM biopsies. 450K
+     - GSE127857 (Gomez et al. Cancers, 2021) Human IM / non-IM (CAG, NAG) / Normal biopsies from antrum 450k
+
+  - *in-vitro* data sets
+     - ESGIv1/MB119 IM vs. Normal. Illumina Epic
+     - ESGIv2 IM vs. Non-IM. Illumina Epic
+
+  - healthy stomach (KFR)
+  - Stomach and intestine from WGBS atlas
+
+```{r}
+## Encode H1esc genomic segments#
+Segments = read.delim(gzfile("../../../../Data/ExtData/genome_annotation/Encode/wgEncodeBroadHmmH1hescHMM.bed.gz"), header = F)
+Segments = subset(Segments, !grepl("Repetitive\\/CNV", V4))
+segment_ranges = GRanges(seqnames = Segments$V1, IRanges(start = Segments$V2, end = Segments$V3, names = Segments$V4))
+```
+
+```{r}
+# Add genomic segmentation labels  
+anno_ranges = with(full_anno, GRanges(seqnames = as.character(CHR), IRanges(start = MAPINFO, end = MAPINFO, names = full_anno$Row.names) ) )
+
+seg_ovlp = findOverlaps(segment_ranges, anno_ranges)
+full_anno$Seg = NA
+full_anno$Seg[subjectHits(seg_ovlp)] = names(segment_ranges[queryHits(seg_ovlp)])
+```
+
+## This study, clonal samples
+
+```{r}
+evCC_env = new.env()
+load("../../../../Data/Processed/ClonalCultures/DNAm/myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData", envir = evCC_env)
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/myLoad_IM_nonIM_and_healthy_stomach.RData", envir = evCC_env)
+
+```
+
+```{r}
+mN_anno_evCC = get("myNorm_anno_sorted", evCC_env)
+tmp = get("myLoad", evCC_env)
+ed = as.data.frame(tmp$pd)
+
+healthy_stomach_samples <- subset(ed, Project=="KFR_Healthy_Stomach")$Sample_ID
+evCC_samples <- subset(ed, Project!="KFR_Healthy_Stomach")$Sample_ID
+
+mN_anno_healthy_stomach <- mN_anno_evCC[,colnames(mN_anno_evCC)[!colnames(mN_anno_evCC) %in% evCC_samples ] ]
+ed_healthy_stomach <- ed[rownames(ed)[!rownames(ed) %in% evCC_samples],]
+
+mN_anno_evCC <- mN_anno_evCC[, colnames(mN_anno_evCC)[!colnames(mN_anno_evCC) %in% healthy_stomach_samples ]]
+ed <- ed[rownames(ed)[!rownames(ed) %in% healthy_stomach_samples], ]
+
+ed$Cohort = "This study, ex-vivo clonal"
+colnames(ed) = gsub("Stomach_site", "Site", gsub("Sample_ID","SampleID",colnames(ed)))
+ed = subset(ed, PatientID %in% c("592","594") & Sample_Group %in% c("IM","non-IM"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Non-IM")
+ed$sample_label <- paste0(ed$PatientID, "-", ed$Condition, "-",ed$CloneID)
+
+tmp_mat <- as.matrix(mN_anno_evCC[, ed$SampleID])
+colnames(tmp_mat) <- ed[colnames(tmp_mat), "sample_label"]
+ed[["SampleID"]] <- NULL
+colnames(ed) <- gsub("sample_label", "SampleID", colnames(ed))
+rownames(ed) <- ed$SampleID
+```
+
+```{r}
+anno_epic = mN_anno_evCC[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+colnames(anno_epic) = gsub("UCSC_Islands_Name","UCSC_CpG_Islands_Name", colnames(anno_epic))
+
+ds_evCC = list(mat = tmp_mat, anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort", "Site")])
+
+rm(evCC_env, mN_anno_evCC)
+dummy = gc(verbose=F)
+```
+
+
+
+### Differentially methylated  CpGs between IM and normal stomach in evClonal
+
+FDR < 10% and |logFC| > 0.2
+
+```{r}
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/all_results_betas_IM_nonIM_with_healthy_annotated.RData")
+
+tmp = all_results_betas_annotated[["IMvsNormal"]]
+tmp$comparison = "IMvsNormal"
+tmp = subset(tmp, adj.P.Val < 0.05 & abs(logFC) >= 0.2)
+
+# all_dm_df = merge(tmp, anno_epic, by.x="Row.names", by.y=0, all.x=T, sort=F)
+# setorder(all_dm_df, CHR,MAPINFO)
+up_ids <- subset(tmp, logFC > 0)$Row.names |> as.character()
+down_ids <- subset(tmp, logFC < 0)$Row.names |> as.character()
+
+```
+
+
+```{r}
+# add flags for differentially methylated CpGs
+full_anno$DM_evC = ifelse(rownames(full_anno) %in% down_ids, "Hypo", ifelse(rownames(full_anno) %in% up_ids, "Hyper","n.s."))
+```
+
+## KFR healthy stomach
+
+```{r}
+ed <- ed_healthy_stomach
+ed$Cohort = "Healthy_stomach"
+colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+ed$Condition = "Healthy stomach"
+
+anno_epic = mN_anno_healthy_stomach[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+colnames(anno_epic) = gsub("UCSC_Islands_Name","UCSC_CpG_Islands_Name", colnames(anno_epic))
+
+tmp <- limma::avearrays(as.matrix(mN_anno_healthy_stomach[, ed$SampleID]), ed$Stomach_site)
+ed2 <- data.frame(SampleID=colnames(tmp), Cohort = "Healthy_stomach", Condition ="Healthy stomach", Site = colnames(tmp) )
+rownames(ed2) <- ed2$SampleID
+
+# Add genomic segmentation labels
+# myNorm_ranges = with(anno_epic, GRanges(seqnames = paste0("chr", as.character(CHR)), IRanges(start = MAPINFO, end = MAPINFO, names = rownames(mN_anno_healthy_stomach)) ) )
+
+# seg_ovlp = findOverlaps(segment_ranges, myNorm_ranges)
+# anno_epic$Seg = NA
+# anno_epic$Seg[subjectHits(seg_ovlp)] = names(segment_ranges[queryHits(seg_ovlp)])
+
+#ds_healthy = list(mat = as.matrix(mN_anno_healthy_stomach[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort")])
+ds_healthy = list(mat = tmp, anno = anno_epic, ed = ed2[, c("SampleID","Condition","Cohort", "Site")])
+
+```
+
+
+## Fritsche et al. IM samples
+
+```{r}
+KFR_IM_env = new.env()
+# FIXME 2022-03-15: Check if this is the right preprocessed file used for DME analysis 
+load("../../../../Data/ExtData/Fritsche_et_al_stomach_methylation/Preprocessed/IM/myNorm_anno_sorted.RData", envir = KFR_IM_env)
+
+load("../../../../Data/ExtData/Fritsche_et_al_stomach_methylation/Preprocessed/IM/sample_annotation.RData", envir = KFR_IM_env)
+```
+
+```{r}
+mN_anno_KFR_IM = get("myNorm_anno_sorted", KFR_IM_env)
+
+ed = as.data.frame(get("sample_annotation", KFR_IM_env))
+
+ed$Cohort = "Fritsche et al. ex-vivo PC"
+colnames(ed) = gsub("Sample_Name","SampleID",colnames(ed))
+ed = subset(ed, Patient %in% c("P471","P479") & Sample_Group %in% c("IM","Normal"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Non-IM")
+
+anno_epic = mN_anno_KFR_IM[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_CpG_Islands_Name")]
+
+ds_KFR_IM = list(mat = as.matrix(mN_anno_KFR_IM[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort", "Site")])
+
+rm(KFR_IM_env, mN_anno_KFR_IM)
+dummy = gc(verbose=F)
+```
+
+
+## GSE127857 / Gomez et al.
+
+```{r}
+tmp <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE127857/myLoad_GSE127857_batch797x.rds")
+
+mN_anno_tmp = readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE127857/myNorm_GSE127857_anno_sorted_batch_797x.rds")
+
+ed = tmp$pd |> as.data.frame()
+
+# ed$Cohort = "Gomez et al. biopsies"
+# colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+# ed$Condition = ifelse(ed$Sample_Group_simple=="IM","IM", ifelse(ed$Sample_Group_simple %in% c("CAG", "NAG"), "Non-IM", "Healthy Antrum") )
+# # According to M&M of the article: Only the sample from antrum was selected for the methylation array study to avoid anatomic region-specific methylation.
+# ed$Site = "Antrum" 
+
+
+tmp_mat <- mN_anno_tmp[, ed$Sample_ID] |> as.matrix()
+tmp_mat_avg <- limma::avearrays(tmp_mat, ed$Sample_Group_simple)
+
+ed <- data.frame(SampleID = colnames(tmp_mat_avg), Cohort = "Gomez et al. biopsies")
+ed$Condition = ifelse(ed$SampleID=="IM","IM", ifelse(ed$SampleID %in% c("CAG", "NAG"), "Non-IM", "Healthy stomach") )
+ed$Site = "Antrum"
+rownames(ed) <- ed$SampleID
+
+anno_epic = mN_anno_tmp[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+
+#ds_gomez = list(mat = as.matrix(mN_anno_tmp[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort", "Site")])
+ds_gomez = list(mat = tmp_mat_avg, anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort","Site")])
+
+rm(mN_anno_tmp,  tmp)
+dummy = gc(verbose=F)
+```
+
+
+
+
+## GSE220511 / Takeuchi  et al. PMID: 37751933
+
+```{r}
+ed <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE220511_IM_nonIM/GSE2205511_Sample_Description.rds")
+
+mN_anno_tmp = readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE220511_IM_nonIM/myNorm_GSE220511_anno_sorted.rds")
+
+
+# ed$Cohort = "Gomez et al. biopsies"
+# colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+# ed$Condition = ifelse(ed$Sample_Group_simple=="IM","IM", ifelse(ed$Sample_Group_simple %in% c("CAG", "NAG"), "Non-IM", "Healthy Antrum") )
+# # According to M&M of the article: Only the sample from antrum was selected for the methylation array study to avoid anatomic region-specific methylation.
+# ed$Site = "Antrum" 
+
+
+tmp_mat <- mN_anno_tmp[, ed$geo_accession] |> as.matrix()
+tmp_mat_avg <- limma::avearrays(tmp_mat, ed$condition)
+
+ed <- data.frame(SampleID = colnames(tmp_mat_avg), Cohort = "Takeuchi et al. LCM")
+ed$Condition = ifelse(ed$SampleID=="IM","IM", ifelse(ed$SampleID=="non-IM", "Non-IM", ed$SampleID) )
+ed$Site = ifelse(ed$SampleID == "Healthy SI","SI","Stomach")
+rownames(ed) <- ed$SampleID
+
+anno_epic = mN_anno_tmp[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+
+#ds_gomez = list(mat = as.matrix(mN_anno_tmp[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort", "Site")])
+ds_takeuchi = list(mat = tmp_mat_avg, anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort","Site")])
+
+rm(mN_anno_tmp,  tmp)
+dummy = gc(verbose=F)
+```
+
+
+
+
+
+## Polyclonal cohort / ZZ
+
+```{r}
+evPC_env = new.env()
+load("../../../../Data/Processed/PolyclonalCultures/DNAm/myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData", envir = evPC_env)
+```
+
+```{r}
+mN_anno_pc = get("myNorm_anno_sorted", evPC_env)
+ed <- get("ed", evPC_env) |> as.data.frame() |> subset(Project == "ZZU")
+
+ed$Cohort = "This study, ex-vivo polyclonal"
+colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+ed = subset(ed, Sample_Group %in% c("IM","NON_IM"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Non-IM")
+ed$Site = ifelse(ed$Stomach_site == "antrum","Antrum", ifelse(ed$Stomach_site=="junction","Antrum/Corpus","Corpus"))
+
+tmp_mat <- as.matrix(mN_anno_pc[, ed$SampleID])
+colnames(tmp_mat) <- ed[colnames(tmp_mat), "Sample_Label"]
+
+rownames(ed) <- ed$Sample_Label
+ed2 <- ed[, c("Sample_Label","Condition","Cohort","Site")] |> setNames(c("SampleID","Condition","Cohort","Site"))
+
+anno_epic = mN_anno_pc[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+colnames(anno_epic) = gsub("UCSC_Islands_Name","UCSC_CpG_Islands_Name", colnames(anno_epic))
+```
+
+
+```{r}
+
+ds_evPC = list(mat = tmp_mat , anno = anno_epic, ed = ed2)
+
+rm(evPC_env, mN_anno_pc)
+dummy = gc(verbose=F)
+
+```
+
+### Differentially methylated  CpGs between IM and normal stomach in evPolyClonal
+
+FDR < 10% and |logFC| > 0.2
+
+```{r}
+# add flags for differentially methylated CpGs
+
+load("../../../../Data/Processed/PolyclonalCultures/DNAm/all_results_betas_IM_nonIM_with_healthy_annotated.RData")
+
+tmp = all_results_betas_annotated[["IMvsNormalAntrum"]]
+tmp$comparison = "IMvsNormalAntrum"
+tmp = subset(tmp, adj.P.Val < 0.05 & abs(logFC) >= 0.2)
+
+up_ids <- subset(tmp, logFC > 0)$Row.names |> as.character()
+down_ids <- subset(tmp, logFC < 0)$Row.names |> as.character()
+
+full_anno$DM_evPC = ifelse(rownames(full_anno) %in% down_ids, "Hypo", ifelse(rownames(full_anno) %in% up_ids, "Hyper","n.s."))
+
+```
+
+## Huang et al.
+
+```{r}
+huang_env = new.env()
+load("../../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/myNorm_anno_sorted_with_average.RData", envir=huang_env)
+
+load("../../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/myLoad.RData", envir=huang_env)
+```
+
+```{r}
+mL_Huang = get("myLoad", huang_env)
+
+ed_Huang_all = as.data.frame(mL_Huang$pd)
+ed = subset(ed_Huang_all, Sample_Group %in% c("IM","Normal") & Site == "Antrum")
+rm(mL_Huang)
+ed$Cohort = "Huang et al. biopsies"
+colnames(ed) = gsub("Sample_Name","SampleID",colnames(ed))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Non-IM")
+
+mN_anno_Huang = get("myNorm_anno_sorted", huang_env)
+rownames(mN_anno_Huang) = mN_anno_Huang$Row.names
+
+anno_450k = mN_anno_Huang[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_CpG_Islands_Name","DHS","Enhancer","Phantom","Probe_SNPs","Probe_SNPs_10")]
+rownames(anno_450k) = rownames(mN_anno_Huang)
+
+anno_450k = anno_450k[order(anno_450k$CHR, anno_450k$MAPINFO),]
+#anno_450k$DM = ifelse(rownames(anno_450k) %in% unique_dm_ids, "DM","n.s.")
+
+mat_avg = limma::avearrays(as.matrix(mN_anno_Huang[, ed$SampleID]), ed$Condition)
+
+ed2 <- data.frame(row.names = colnames(mat_avg), SampleID=colnames(mat_avg), Condition = colnames(mat_avg), Cohort =  "Huang et al. biopsies", Site = "Antrum" )
+
+#ds_huang = list(mat = as.matrix(mN_anno_Huang[, ed$SampleID]), anno = anno_450k, ed = ed[, c("SampleID","Condition","Cohort")])
+
+ds_huang = list(mat = mat_avg, anno = anno_450k, ed = ed2[, c("SampleID","Condition","Cohort","Site")])
+
+rm(huang_env)
+dummy=gc(verbose = F)
+
+table(ed$Sample_Group, ed$Site)
+```
+
+## Leung IMO data
+
+```{r}
+mN_anno_leung <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE210994_Leung_IMO/myNorm_GSE210994_anno_sorted.rds")
+
+mL_leung <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE210994_Leung_IMO/myLoad_GSE210994.rds")
+```
+
+```{r}
+ed_leung_all = as.data.frame(mL_leung$pd)
+#ed = subset(ed_leung_all, Sample_Group %in% c("IM","Normal") & Site == "Antrum")
+ed <- ed_leung_all
+rm(mL_leung)
+ed$Cohort = "Leung IMO"
+colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+
+# adapt groups to terms used in other DS
+sample_group_translation <- c("Colon" = "Left Colon",
+                              "Ileum"="Small intestine", 
+                              "IM"="IM",
+                              "Healthy_stomach"="Healthy stomach")
+
+ed$Condition = sample_group_translation[ed$Sample_Group_simple]
+
+
+anno_epic = mN_anno_leung[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+
+anno_epic = anno_epic[order(anno_epic$CHR, anno_epic$MAPINFO),]
+#anno_450k$DM = ifelse(rownames(anno_450k) %in% unique_dm_ids, "DM","n.s.")
+
+mat_avg = limma::avearrays(as.matrix(mN_anno_leung[, ed$SampleID]), ed$Condition)
+
+ed2 <- data.frame(row.names = colnames(mat_avg), SampleID=colnames(mat_avg), Cohort =  "Leung IMO" )
+ed2$Condition <- ifelse(ed2$SampleID %in% c("IM","Healthy stomach"), ed2$SampleID, "Healthy intestine")
+ed2$Site <- ifelse(ed2$SampleID %in% c("IM","Healthy stomach"), "Antrum", ed2$SampleID)
+
+
+ds_leung = list(mat = mat_avg, anno = anno_epic, ed = ed2[, c("SampleID","Condition","Cohort","Site")])
+
+rm(leung_env)
+dummy=gc(verbose = F)
+
+table(ed$Sample_Group_simple)
+```
+
+
+## WGBS Atlas
+
+```{r}
+tmp <- readRDS("../../../../Data/Processed/WGBS/WGS_Cpg_Meth_avg_beta.rds")
+
+mN_avg_wgs <- as.matrix(tmp[!is.na(tmp$ilmn_id), c("Gastric.fundus","Gastric.body","Gastric.antrum","Small.int", "Colon.Left","Colon.Right")])
+rownames(mN_avg_wgs) <- tmp[!is.na(tmp$ilmn_id),]$ilmn_id
+
+```
+
+```{r}
+sample_to_condition <- c("Gastric.fundus" = "Healthy stomach","Gastric.body"="Healthy stomach","Gastric.antrum"="Healthy stomach","Small.int"="Healthy intestine", "Colon.Left"="Healthy intestine","Colon.Right"="Healthy intestine")
+sample_to_site <- c("Gastric.fundus" = "Fundus","Gastric.body"="Corpus","Gastric.antrum"="Antrum","Small.int"="Small intestine", "Colon.Left"="Left Colon","Colon.Right"="Right Colon")
+ed <- data.frame(row.names=colnames(mN_avg_wgs), 
+                 SampleID = colnames(mN_avg_wgs), 
+                 Condition = sample_to_condition[colnames(mN_avg_wgs)],
+                 Site = sample_to_site[colnames(mN_avg_wgs)],
+                 Cohort = "WGBS")
+
+ds_wgs = list(mat = mN_avg_wgs, anno = anno_epic[rownames(anno_epic) %in% rownames(mN_avg_wgs),], ed = ed[, c("SampleID","Condition","Cohort","Site")])
+
+rm(tmp, mN_avg_wgs)
+dummy=gc(verbose = F)
+
+#table(ed$Sample_Group, ed$Site)
+```
+
+
+```{r}
+save(ds_evCC, ds_evPC, ds_KFR_IM, ds_huang, ds_leung,  ds_gomez, ds_takeuchi, ds_wgs, ds_healthy, full_anno, file="../../../../Data/Processed/All_Methylation_Validation_DS.RData", compress=T)
+```
+

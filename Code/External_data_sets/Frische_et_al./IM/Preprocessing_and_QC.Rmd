@@ -1,0 +1,333 @@
+---
+title: "ESGI (MB044) samples: Atrophy, IM, and Normal - Preprocessing and QC"
+author: "Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Preprocessing_and_QC/")
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+setwd("/data/projects/MB119_Methylation/analysis/MB119-F013_Diseased_vs_Healthy/Including_Atrophy/Preprocessing_and_QC/")
+
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+#library("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+
+```
+
+# Experimental Design:
+
+Gastric epithelial cells of antrum, corpus and fundus were isolated from sleeve resection tissue and cultivated as organoids. After one to two passages, Air-Liquid-Interface (ALI) culture was started and when cells had developed a completly polarized and sealed monolayer, differentiation was induced by removing Wnt and R-spoding from the cell culture medium for seven days. The so obtained samples are:  
+- Antrum undifferentiated (AU)  
+- Antrum differentiated (AD)  
+- Corpus undifferentiated (CU)  
+- Corpus differentiated (CD)  
+- Fundus undifferentiated (FU)  
+- Fundus differentiated (FD)  
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+In another approach, gastric organoids were grown for 1-2 passages from antral biopsies of two patients (P471, P479), which showed atrophic and metaplastic lesions. The so obtained samples are:
+- Normal  
+- Atrophy  
+- Intestinal metaplasia (IM).
+
+
+This experiment analyses the methylation values of the stomach with respect to the DNA methylation values from the ESGI cohort. For this purpose, the DNA methylation values of differentiated and undifferentiated stomach samples will be averaged per region, in order to allow group comparisons with antrum, corpus and fundus vs the diseased samples.
+
+Additionally, the "normal" samples of the diseased patients will be compared to the antrum samples from the ALI culture.
+
+To analyse the generated data in R, we will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013].
+
+# Data Import
+
+Raw intensity values (red and green channel .idat files) have been loaded and filtered already in
+-  [link](/data/projects/MB119_Methylation/analysis/ESGI/ESGI/All_Comparisons/170423_Preprocessing_and_QC.Rmd) for the diseased and normal samples
+- [link](/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/Preprocessing_and_QC.Rmd) for the stomach samples
+
+Filtered out were probes     
+- with a detection p-value > 0.01  
+- with a bead-count < 3  
+- in which the probed CpG falls near a SNP as defined in Zhou W. *et al.*, 2016  
+- in which the probe aligns to multiple locations with bwa as defined in Nordlund *et al.*, 2013   
+and   
+- non-cg probes  
+
+
+Due to another array format used for the stomach samples of the different regions (EPIC methylation, instead of the 450K array), only overlapping CpGs will be used for analysis and the normalization method applied will be BMIQ, because it needs only beta values as input, and allows therefore normalization of both data sets together.
+
+```{r modify champ.load, message=TRUE}
+
+if(FALSE){
+  load("/data_genome2/projects/MB119_Methylation/analysis/ESGI/ESGI/All_Comparisons/170423_myLoad.RData")
+  myLoad450k <- updateObject(myLoad)
+  
+  load("/data_genome2/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/myLoad.RData")
+  myLoadEPIC <- myLoad
+  rm(myLoad)
+  
+  
+  betas <- merge(myLoad450k$beta, myLoadEPIC$beta, by=0,sort=F)
+  rownames(betas) <- betas$Row.names
+  betas$Row.names = NULL
+  betas <- as.matrix(betas)
+  
+  
+  sample_annotation_450k <- myLoad450k$pd
+  sample_annotation_450k$Site <- rep("Antrum", 6)
+  sample_annotation_450k$Condition <- rep("NA", 6)
+  sample_annotation_450k <- sample_annotation_450k[,c("Sample_Name", "Sample_Plate", "Sample_Well", "Sample_Group", "Patient", "Gender", "Age", "Culture", "Site", "Condition", "Array", "Slide", "Basename", "filenames")]
+  sample_annotation_450k$Sub_group <- rep(c("Healthy", "Diseased", "Diseased"), 2)
+  sample_annotation_450k$Sample_Group <- rep(c("Normal", "Atrophy", "IM"), 2)
+  
+  sample_annotation_EPIC <- myLoadEPIC$pd
+  sample_annotation_EPIC$Sub_group <- rep("Healthy", 18)
+  sample_annotation_EPIC$Sample_Group <- c(rep("Antrum", 6), rep("Corpus", 6), rep("Fundus", 6))
+  
+  
+  sample_annotation <- rbind(sample_annotation_450k, sample_annotation_EPIC)
+  
+  
+  save(sample_annotation, file="sample_annotation.RData")
+  save(betas, file="betas.RData")
+
+}else{
+  load("sample_annotation.RData")
+  load("betas.RData")
+  }
+```
+
+# Quality Control raw data
+
+The QC function uses the raw beta values for initial quality control:  
+- The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the    top 1,000 most variable probes of all samples.  
+- The density Plot displays the beta distribution of each sample  
+- The dendrogram clusters all samples (the distance between the samples is calculated directly by   all probes)  
+
+
+```{r QC raw, echo=FALSE, warning=FALSE, message=FALSE}
+
+champ.QC(beta = betas, pheno = sample_annotation$Sample_Group)
+champ.QC
+
+```
+
+
+# Normalization
+
+The normlization method applied here is "BMIQ (beta mixture quantile normalization)" [Touleimat N. and Tost J, 2012], which is recommanded for data sets where you do not expect global differences between the samples 
+
+
+```{r Normalization, echo=FALSE, warning=FALSE, message=FALSE} 
+
+
+if(FALSE){
+  myNorm = champ.norm(beta = betas, method = "BMIQ", arraytype = "450K", cores = 12)
+
+  save(myNorm, file = "myNorm.RData")
+} else {
+  load("myNorm.RData")
+}
+
+myNorm_with_average <- myNorm
+
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_Normal" = rowMeans(myNorm_with_average[,c("P471-N", "P479-N")]))
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_Atrophy" = rowMeans(myNorm_with_average[,c("P471-A", "P479-A")]))
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_IM" = rowMeans(myNorm_with_average[,c("P471-IM", "P479-IM")]))
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_Antrum" = rowMeans(myNorm_with_average[,c("23-AU", "24-AU", "26-AU", "23-AD", "24-AD", "26-AD")]))
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_Corpus" = rowMeans(myNorm_with_average[,c("23-CU", "24-CU", "26-CU", "23-CD", "24-CD", "26-CD")]))
+myNorm_with_average <- cbind(myNorm_with_average, "AVG_Fundus" = rowMeans(myNorm_with_average[,c("23-FU", "24-FU", "26-FU", "23-FD", "24-FD", "26-FD")]))
+
+
+myNorm_with_average <- cbind(myNorm_with_average, "A_vs_N" = (myNorm_with_average[,"AVG_Atrophy"] - myNorm_with_average[,"AVG_Normal"]))
+myNorm_with_average <- cbind(myNorm_with_average, "A_vs_Healthy_Antrum" = (myNorm_with_average[,"AVG_Atrophy"] - myNorm_with_average[,"AVG_Antrum"]))
+
+myNorm_with_average <- cbind(myNorm_with_average, "IM_vs_N" = (myNorm_with_average[,"AVG_IM"] - myNorm_with_average[,"AVG_Normal"]))
+myNorm_with_average <- cbind(myNorm_with_average, "IM_vs_Healthy_Antrum" = (myNorm_with_average[,"AVG_IM"] - myNorm_with_average[,"AVG_Antrum"]))
+
+
+data("probe.features")
+
+# xx = subset(myNorm_with_average, gene == "SIM2")
+# 
+# pheatmap(xx[,2:25])
+
+
+myNorm_with_average <- merge(myNorm_with_average, probe.features, by=0, sort=F)
+write.table(myNorm_with_average, file = "Normalized_betas_anno.txt", row.names=F , sep="\t", dec=".")
+```
+
+# Quality Control normalized Data  
+
+## MDS plot  
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+  
+```{r MDS plot SWAN, echo=FALSE, warning=FALSE, message=FALSE}
+
+mdsPlot(myNorm, numPositions = 1000, sampGroups = sample_annotation$Sample_Group, sampNames = sample_annotation$Sample_Name, legendPos = "topleft", legendNCol = 2)
+
+```
+
+## Density Plot  
+The density Plot displays the beta distribution of each sample.
+
+```{r density plot}
+
+# SWAN
+densityPlot(dat = myNorm, sampGroups = sample_annotation$Sample_Group, main = paste("Density plot of SWAN normalized data (", nrow(myNorm), " probes)", sep = ""))
+
+```
+
+## Dendrogram  
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+```{r dendrogram}
+
+hc <- hclust(dist(t(myNorm)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(sample_annotation$Sample_Group)))
+names(MyColor) <- names(table(sample_annotation$Sample_Group))
+labels_colors(dend) <- MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]]
+plot(dend, center = TRUE, main = paste("All samples before normalization (", nrow(myNorm), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+        
+```
+
+
+## Heatmap  
+The Heatmap visualizes the similarity of the samples based on the top 1,000 and 5,000 most variable probes of all samples.
+
+```{r heatmap 1000 most var}
+
+o <- order(-matrixStats::rowVars(myNorm))[1:1000]
+data <- myNorm[o,]
+col_anno <- as.data.frame(sample_annotation)["Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs - SWAN", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+
+o <- order(-matrixStats::rowVars(myNorm))[1:5000]
+data <- myNorm[o,]
+col_anno <- as.data.frame(sample_annotation)["Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 5,000 most variable CpGs - SWAN", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+```
+
+The 1,000 most varibale CpGs between all conditions show a clustering of the "normal" samples together with the antrum samples from two patients, and on top of that the metaplastic samples. But the antrum samples from the third patient cluster quite far away. There might be a batch effect. 
+
+# Batch effect correction  
+
+With the ChAMP SVD function (runs Singular Value Decomposition on a dataset to estimate the impact of batch effects) I test for putative batch effects and perform subsequently batch effect correction using the champ.runCombat method for batch adjustment, adjusting for the slide, which at the same time adjusts for the patient effect as well, because each patient was hybridized to a different slide.
+
+The first plot shows the result of the SVD analysis before adjustment. Then the data are adjusted for "slide" as the batch and "Subgroup" meaning healthy and diseased as the variables. And the second plots shows the result of the SVD analysis after adjustment.   
+
+```{r batch effect correction SWAN, echo=FALSE, warning=FALSE, message=FALSE}
+# 
+# 
+# sample_annotation_450k$Sample_Group <- rep(c("Antrum", "Atrophy", "IM"), 2)
+# sample_annotation_EPIC$Sample_Group <- c(rep("Antrum", 6), rep("Corpus", 6), rep("Fundus", 6))
+# sample_annotation <- rbind(sample_annotation_450k, sample_annotation_EPIC)
+# 
+
+
+
+
+champ.SVD(beta = myNorm, rgSet = F, pd = sample_annotation)
+
+# adjusting for Site, which here is Antrum, Corpus, Fundus, Atrophy, and IM and for Sub_group, which here is healthy and diseased, meanig, that the stomach region and the disease state are taken into account.
+
+if(FALSE) {
+  myNorm_batch_corrected <- champ.runCombat(beta = myNorm, pd = sample_annotation, variablename = c("Site", "Sub_group"))
+
+save(myNorm_batch_corrected, file = "myNorm_batch_corrected.RData")
+
+} else {
+  load("myNorm_batch_corrected.RData")
+
+}
+
+champ.SVD(beta = myNorm_batch_corrected, resultsDir = "./CHAMP_SVDimages_batch_corrected/", pd = sample_annotation, rgSet = F)
+
+```
+
+# Quality Control normalized Data and batch corrected beta values
+
+## MDS plot  
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups = sample_annotation$Sample_Group, sampNames = sample_annotation$Sample_Name, legendPos = "topleft", legendNCol = 2)
+
+```
+
+## Density Plot  
+The density Plot displays the beta distribution of each sample.
+
+```{r}
+
+# SWAN
+densityPlot(dat = myNorm_batch_corrected, sampGroups = sample_annotation$Sample_Group, main = paste("Density plot of SWAN normalized data (", nrow(myNorm_batch_corrected), " probes)", sep = ""))
+
+```
+
+## Dendrogram  
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+```{r}
+
+hc <- hclust(dist(t(myNorm_batch_corrected)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(sample_annotation$Sample_Group)))
+names(MyColor) <- names(table(sample_annotation$Sample_Group))
+labels_colors(dend) <- MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]]
+plot(dend, center = TRUE, main = paste("All samples before normalization (", nrow(myNorm_batch_corrected), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+        
+```
+
+
+## Heatmap  
+The Heatmap visualizes the similarity of the samples based on the top 1,000 and 5,000 most variable probes of all samples.
+
+```{r}
+
+o <- order(-matrixStats::rowVars(myNorm_batch_corrected))[1:1000]
+data <- myNorm_batch_corrected[o,]
+col_anno <- as.data.frame(sample_annotation)["Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs - SWAN", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+
+o <- order(-matrixStats::rowVars(myNorm_batch_corrected))[1:5000]
+data <- myNorm_batch_corrected[o,]
+col_anno <- as.data.frame(sample_annotation)["Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 5,000 most variable CpGs - SWAN", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+```
+
+The batch effect correction, corrected for Site, which here is Antrum, Corpus, Fundus, Atrophy, and IM and for Sub_group, which here is healthy and diseased, seems to adjust minor batch effects in the slide covariate and antrum and normal samples cluster together and apart from atrophy and IM. But I am not sure, if applying it is correct, because the cluster is quite different from the unadjusted beta values.
+
+
+
+# Conclusion
+
+Differential Methylation analysis should be performed with the not batcg corrected data set. 
+
+Eventually, it might be interesting to compare the Antrum samples of 3D organoids with the Antrum samples from the ALI culture.  
+
+```{r, eval=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+sessionInfo()
+```

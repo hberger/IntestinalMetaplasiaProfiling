@@ -1,0 +1,420 @@
+---
+title: "TF Expression"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(DESeq2)
+library(data.table)
+library(pheatmap)
+library(umap)
+```
+
+
+```{r}
+bartfeld_folder = "/data_genome2/public_data/GSE127938_Bartfeld_gut_organoids"
+human_data = fread(cmd = paste0("zcat ",file.path(bartfeld_folder,"Raw_counts/GSE127938_human_gastro_organoids_read_counts.txt.gz") ) )
+bartfeld_mat = as.matrix(human_data[,3:ncol(human_data)])
+rownames(bartfeld_mat) = human_data$V1
+
+bartfeld_env = new.env()
+load("/data_genome2/public_data/GSE127938_Bartfeld_gut_organoids/analysis/GSE127938_human_RNASeq.Rdata", bartfeld_env)
+
+esgiv2_env = new.env()
+load("Results/2021-12-22/DGE_analysis_image.Rdata", esgiv2_env)
+esgiv2_mat = get("count_mat", esgiv2_env)
+
+tmp = merge(esgiv2_mat, bartfeld_mat, by=0, sort=F)
+comb_mat = as.matrix(tmp[, 2:ncol(tmp)])
+rownames(comb_mat) = tmp$Row.names
+
+b_ed = get("human_col_anno", bartfeld_env)
+e_ed = get("ed", esgiv2_env)
+
+comb_ed = data.frame(sample_name = c(b_ed$sampleID, e_ed$Library.Name), condition = c(b_ed$tissue, e_ed$Condition), row.names = c(rownames(b_ed), rownames(e_ed)), ds = c(rep("Bartfeld", nrow(b_ed)), rep("ESGIv2", nrow(e_ed))) ) 
+comb_ed = comb_ed[colnames(comb_mat),]
+
+gene_anno = get("gene_anno", esgiv2_env)
+
+# remove mitochondrial genes as those seem to have been treated differentially by both protocols or preprocessing pipelines
+MT_genes = subset(gene_anno, grepl("^mitochondrially encoded", GeneName) | Chr=="MT")
+comb_mat = comb_mat[!rownames(comb_mat) %in% rownames(MT_genes),]
+
+```
+
+```{r}
+dds = DESeqDataSetFromMatrix(countData = comb_mat, colData = comb_ed, design = ~ condition)
+```
+
+```{r}
+expr_mat = assay(vst(dds, blind=F))
+```
+
+```{r}
+tf_animaldb = read.table("/data_genome1/References/GeneSets/misc/TF/AnimalDB-2015-02-17.txt", sep="\t", header=T)
+
+tf_in_ds = subset(gene_anno[rownames(expr_mat),], GeneSymbol %in% tf_animaldb$Symbol & !is.na(GeneSymbol) & GeneSymbol != "")
+```
+
+
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[tf_in_ds$Geneid, ]
+
+pheatmap(sel_mat, show_rownames = F, labels_col = comb_ed[colnames(sel_mat), "sample_name"], annotation_col = comb_ed)
+```
+
+# UMAP
+
+## All TF
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("topleft", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+## 30% Most variable TF
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[tf_in_ds$Geneid, ]
+
+mads = apply(sel_mat, 1, mad, na.rm=T)
+medians = apply(sel_mat, 1, median, na.rm=T)
+covs = mads/medians
+
+covs = covs[order(covs, decreasing = T)]
+
+sel_mat = sel_mat[names(covs)[1:(floor(nrow(tf_in_ds)*0.3))], ]
+
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("topright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+
+## 10% Most variable TF
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[tf_in_ds$Geneid, ]
+
+mads = apply(sel_mat, 1, mad, na.rm=T)
+medians = apply(sel_mat, 1, median, na.rm=T)
+covs = mads/medians
+
+covs = covs[order(covs, decreasing = T)]
+
+sel_mat = sel_mat[names(covs)[1:(floor(nrow(tf_in_ds)*0.1))], ]
+
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("topright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+
+## 5% Most variable TF
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[tf_in_ds$Geneid, ]
+
+mads = apply(sel_mat, 1, mad, na.rm=T)
+medians = apply(sel_mat, 1, median, na.rm=T)
+covs = mads/medians
+
+covs = covs[order(covs, decreasing = T)]
+
+sel_mat = sel_mat[names(covs)[1:(floor(nrow(tf_in_ds)*0.05))], ]
+
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("bottomright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+## 1% Most variable TF
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[tf_in_ds$Geneid, ]
+
+mads = apply(sel_mat, 1, mad, na.rm=T)
+medians = apply(sel_mat, 1, median, na.rm=T)
+covs = mads/medians
+
+covs = covs[order(covs, decreasing = T)]
+
+sel_mat = sel_mat[names(covs)[1:(floor(nrow(tf_in_ds)*0.01))], ]
+
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("bottomright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+
+
+# DGE TF from Bartfeld et al. human organoids
+
+We use TF genes differentially expressed between stomach (corpus/pylorus), cranial intestine (duodenum/jejunum) and caudal intestine (ileum/colon) to filter the list of all TF used for clustering. 
+
+## DGE TF only
+
+
+
+```{r}
+load("./All_Bartfeld_Sig_DGE_TF.Rdata")
+```
+
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[unique(all_sig_tf_tab$Row.names), ]
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("bottomright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+
+## DGE TF only, |log2FC| > 3
+
+```{r, fig.height=6, fig.width=10}
+sel_mat = expr_mat[unique(subset(all_sig_tf_tab, abs(log2FoldChange)>3)$Row.names), ]
+```
+
+```{r, fig.width=10, fig.height=8}
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+
+grading_col_scale = c("colon"="blue","Colon"="blue", "duodenum"="yellow","Duodenum"="yellow","ileum"="red", "jejunum"="orange", "IM"="brown", "Non-IM"="grey", "Normal Antrum"="darkgreen", "stomach pylorus"="darkgreen", "stomach corpus"="lightgreen")
+
+set.seed(1243)
+rr = umap(t(sel_mat)) # input_data[apply(is.na(input_data),1,sum)==0,]
+
+group_val = comb_ed[rownames(rr$data),][["condition"]]
+group_val = ifelse(is.na(group_val), "n.a.", group_val)
+
+cond = factor(group_val)
+sampleid = factor(comb_ed[rownames(rr$layout), "sample_name"])
+
+plot(rr$layout[, 1], rr$layout[, 2], cex=1.5, col=grading_col_scale[as.character(cond)], ylim=c(min(rr$layout[,2]),max(rr$layout[,2])), xlim=c(min(rr$layout[,1]),max(rr$layout[,1])+2), ylab="Coord 2", xlab="Coord 1", main="UMAP on unscaled image data", pch = ifelse(comb_ed[rownames(rr$data), "ds"]=="Bartfeld",18,20 ) ) #
+text(rr$layout[, 1], rr$layout[, 2], labels = sampleid, cex=0.7, adj = c(-0.1,0.5))
+legend("topright", legend=names(grading_col_scale), fill=grading_col_scale )
+#abline(h=0, lty=2)
+```
+
+## Overlap with ESGIv2 DGE TF
+
+```{r}
+tmp_res = get("all_results", esgiv2_env)
+im_vs_nonim = tmp_res[["IM_vs_non-IM_all_samples"]]
+
+im_vs_nonim_gut_tf = subset(im_vs_nonim, GeneSymbol %in% all_sig_tf_tab$GeneSymbol & padj < 0.05)[,1:10]
+
+s_v_caudal = subset(all_sig_tf_tab, comparison == "Stomach_vs_Caudal")
+colnames(s_v_caudal) = gsub("log2FoldChange", "log2FC_st_v_caudal", colnames(s_v_caudal))
+s_v_cranial = subset(all_sig_tf_tab, comparison == "Stomach_vs_Cranial")
+colnames(s_v_cranial) = gsub("log2FoldChange", "log2FC_st_v_cranial", colnames(s_v_cranial))
+cranial_v_caudal = subset(all_sig_tf_tab, comparison == "Cranial_vs_Caudal")
+colnames(cranial_v_caudal) = gsub("log2FoldChange", "log2FC_cranial_v_caudal", colnames(cranial_v_caudal))
+
+im_vs_nonim_gut_tf = merge(im_vs_nonim_gut_tf, s_v_cranial[, c("GeneSymbol", "log2FC_st_v_cranial")] , by="GeneSymbol", sort=F, all.x=T)
+im_vs_nonim_gut_tf = merge(im_vs_nonim_gut_tf, s_v_caudal[, c("GeneSymbol", "log2FC_st_v_caudal")] , by="GeneSymbol", sort=F, all.x=T)
+im_vs_nonim_gut_tf = merge(im_vs_nonim_gut_tf, cranial_v_caudal[, c("GeneSymbol", "log2FC_cranial_v_caudal")] , by="GeneSymbol", sort=F, all.x=T)
+
+```
+
+```{r, fig.height=8}
+with(im_vs_nonim_gut_tf, plot(log2FoldChange, -log2FC_st_v_cranial, type="n", main="IMvsNon-IM compared to Cranial Intestine vs. Stomach", xlab="log2FC IM vs. Non-IM", ylab="log2FC Cranial intestine vs. Stomach"))
+with(im_vs_nonim_gut_tf, text(log2FoldChange, -log2FC_st_v_cranial, label=GeneSymbol))
+abline(h=0,v=0, lty=2)
+
+with(im_vs_nonim_gut_tf, table(sign(log2FoldChange), sign(-log2FC_st_v_cranial), dnn=c("IM vs non-IM", "Cranial vs. Stomach"), useNA="always") )
+
+
+with(im_vs_nonim_gut_tf, plot(log2FoldChange, -log2FC_st_v_caudal, type="n", main="IMvsNon-IM compared to Caudal Intestine vs. Stomach", xlab="log2FC IM vs. Non-IM", ylab="log2FC Caudal intestine vs. Stomach"))
+with(im_vs_nonim_gut_tf, text(log2FoldChange, -log2FC_st_v_caudal, label=GeneSymbol))
+abline(h=0,v=0, lty=2)
+
+with(im_vs_nonim_gut_tf, table(sign(log2FoldChange), sign(-log2FC_st_v_caudal), dnn=c("IM vs non-IM", "Caudal vs. Stomach"), useNA="always") )
+
+with(im_vs_nonim_gut_tf, plot(log2FoldChange, -log2FC_cranial_v_caudal, type="n", main="IMvsNon-IM compared to Caudal vs. Cranial Intestine", xlab="log2FC IM vs. Non-IM", ylab="log2FC Caudal vs. Cranial intestine"))
+with(im_vs_nonim_gut_tf, text(log2FoldChange, -log2FC_cranial_v_caudal, label=GeneSymbol))
+abline(h=0,v=0, lty=2)
+
+with(im_vs_nonim_gut_tf, table(sign(log2FoldChange), sign(-log2FC_cranial_v_caudal), dnn=c("IM vs non-IM", "Caudal vs. Cranial"), useNA="always") )
+
+```
+
+## Concordant DGE
+
+```{r, fig.height=8}
+
+fc_mat = as.matrix(im_vs_nonim_gut_tf[, c("log2FoldChange","log2FC_st_v_cranial","log2FC_st_v_caudal","log2FC_cranial_v_caudal")])
+rownames(fc_mat) = im_vs_nonim_gut_tf$GeneSymbol
+fc_mat = -1 * fc_mat
+fc_mat[, "log2FoldChange"] = -1 * fc_mat[, "log2FoldChange"]
+colnames(fc_mat) = c("IM_vs_nonIM", "Cranial_vs_Stomach", "Caudal_vs_Stomach","Caudal_vs_Cranial")
+
+sel_genes = subset(im_vs_nonim_gut_tf, (sign(log2FoldChange) * -sign(log2FC_st_v_cranial)) >0 & abs(log2FoldChange) > 1 & abs(log2FC_st_v_cranial)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Cranial vs. Stomach concordant genes with IM vs non-IM")
+
+sel_genes = subset(im_vs_nonim_gut_tf, sign(log2FoldChange) * -sign(log2FC_st_v_caudal) >0 & abs(log2FoldChange) > 1 & abs(log2FC_st_v_caudal)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Caudal vs. Stomach concordant genes with IM vs non-IM")
+
+sel_genes = subset(im_vs_nonim_gut_tf, sign(log2FoldChange) * -sign(log2FC_cranial_v_caudal) >0 & abs(log2FoldChange) > 1 & abs(log2FC_cranial_v_caudal)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Caudal vs. Cranial concordant genes with IM vs non-IM")
+
+```
+
+## Discordant DGE
+
+```{r, fig.height=8}
+
+fc_mat = as.matrix(im_vs_nonim_gut_tf[, c("log2FoldChange","log2FC_st_v_cranial","log2FC_st_v_caudal","log2FC_cranial_v_caudal")])
+rownames(fc_mat) = im_vs_nonim_gut_tf$GeneSymbol
+fc_mat = -1 * fc_mat
+fc_mat[, "log2FoldChange"] = -1 * fc_mat[, "log2FoldChange"]
+colnames(fc_mat) = c("IM_vs_nonIM", "Cranial_vs_Stomach", "Caudal_vs_Stomach","Caudal_vs_Cranial")
+
+sel_genes = subset(im_vs_nonim_gut_tf, (sign(log2FoldChange) * -sign(log2FC_st_v_cranial)) <0 & abs(log2FoldChange) > 1 & abs(log2FC_st_v_cranial)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Cranial vs. Stomach discordant genes with IM vs non-IM")
+
+sel_genes = subset(im_vs_nonim_gut_tf, sign(log2FoldChange) * -sign(log2FC_st_v_caudal) <0 & abs(log2FoldChange) > 1 & abs(log2FC_st_v_caudal)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Caudal vs. Stomach discordant genes with IM vs non-IM")
+
+sel_genes = subset(im_vs_nonim_gut_tf, sign(log2FoldChange) * -sign(log2FC_cranial_v_caudal) <0 & abs(log2FoldChange) > 1 & abs(log2FC_cranial_v_caudal)>1)
+pheatmap(fc_mat[sel_genes$GeneSymbol,], main="Caudal vs. Cranial discordant genes with IM vs non-IM")
+
+```
+
+# Summary
+
+2022-02-10  
+
+  - IM samples still cluster much nearer to stomach than intestinal samples
+  - Direction of separation of IM from normal stomach is not directly towards intestine but rather towards a distinct location.
+  - better overlap of genes down in IM vs. non-IM and intestine vs. stomach than in the opposite direction (up in IM vs. non-IM and up in intestine vs. stomach). Also more genes in general down in IM vs. non-IM vs. up in the same comparison. Also many TF down in IM vs non-IM not significantly DGE in intestine vs. stomach. 
+  - Stronges changes in HOXA/B genes
+  
+20222-02-18
+  
+  - interesting discordant genes: TCF4 (up in IM vs. non-IM, lower (cave growth conditions) in intestinal, in particular caudal ) and ELF5 (mainly from P594-IM; usually not expressed throughout the gut at all but up in IM-594)
+  - relevant TF and their targets from an GSEA analysis of Bartfeld organoids (and confirmed in literature ADD REFS): CDX2, HNF4A, FOXA2; with HNF4A high in both cranial and caudal parts and CDX2 more so in caudal intestine. See also TF_Expression_Bartfeld_only.Rmd
+  - interestingly (data not shown), HNF4A does not seem to be differentially regulated between IM and non-IM
+  

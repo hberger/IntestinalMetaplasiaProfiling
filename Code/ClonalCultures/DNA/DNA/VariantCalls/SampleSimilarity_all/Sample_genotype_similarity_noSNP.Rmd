@@ -1,0 +1,181 @@
+---
+title: "Sample genotype similarity - sites NOT in dbSNP only"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+# we install the development files in order to avoid some nasty bug when converting VCF to GDS
+#library("devtools")
+#install_github("zhengxwen/gdsfmt")
+#install_github("zhengxwen/SNPRelate")
+rm(list=ls())
+library(SNPRelate)
+library(parallel)
+library(xtable)
+library(naturalsort)
+library(pheatmap)
+library(readxl)
+
+#library(VariantAnnotation)
+
+GDS_FILE = "ESGIv2_samples_noSNP.gds"
+
+vcf.fn = "./ESGIv2_calls_merged_noSNP_only.vcf.gz"
+
+# vcf = readVcf(vcf.fn)
+# ref = as.character(rowRanges(vcf)$REF)
+# alt = unstrsplit(CharacterList(rowRanges(vcf)$ALT), sep=",")
+# inc = (nchar(alt)==1 & nchar(ref)==1)
+
+snpgdsVCF2GDS(vcf.fn, GDS_FILE, method="biallelic.only")
+
+gds_summary = snpgdsSummary(GDS_FILE)
+samples = gds_summary$sample.id
+
+genofile <- snpgdsOpen(GDS_FILE)
+```
+
+```{r}
+ed = read_excel("../../../../metadata/DNA/SampleDescription.xls", sheet = 1)
+
+ed$ShortID = paste(ed$SampleName, ed$CloneID, sep="_")
+sample_codes = as.data.frame(ed)
+# rownames(sample_codes) = as.character(sample_codes$ID)
+rownames(sample_codes) = as.character(sample_codes$SampleID)
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+mm = snpgdsGetGeno(genofile)
+snplist <- snpgdsSNPList(genofile)
+rownames(mm) = samples
+colnames(mm) = paste(snplist$chromosome, snplist$position, sep="_")
+```
+
+
+We keep all variants - no pruning. 
+
+```{r, message=FALSE}
+snpset <- snpgdsLDpruning(genofile, ld.threshold=1)
+snpset.id <- unlist(snpset)
+```
+
+# Primary Component Analyis on genotypes of all samples
+```{r}
+sample.id <- read.gdsn(index.gdsn(genofile, "sample.id"))
+
+pca <- snpgdsPCA(genofile, snp.id=snpset.id, num.thread=8, verbose=F)
+
+tab <- data.frame(sample.id = pca$sample.id, 
+                  EV1 = pca$eigenvect[,1], # the first eigenvector
+                  EV2 = pca$eigenvect[,2], # the second eigenvector
+                  stringsAsFactors = FALSE)
+
+plot(tab$EV2, tab$EV1, col="black",xlab="eigenvector 2", ylab="eigenvector 1", pch=20)
+
+```
+
+
+
+# Multi-Dimensional-Scaling on Identity-by-state distances of all samples
+
+```{r}
+ibs <- snpgdsIBS(genofile, num.thread=8, verbose=F)
+loc <- cmdscale(1 - ibs$ibs, k = 2)
+x <- loc[, 1]; y <- loc[, 2]
+```
+
+```{r}
+plot(x, y, col="black", xlab = "", ylab = "", main = "Multidimensional Scaling Analysis (IBS Distance)",pch=20)
+#legend("bottomleft", legend=levels(race), text.col=1:nlevels(race))
+```
+
+
+# Proportion of IBS2 between genotypes of all samples
+
+IBS2 is the state of identic genotypes when comparing two samples at the same site (i.e. 2 shared alleles; IBS1 corresponds to 1 shared allele and IBS0 to no shared alleles). We compute the proportion of IBS2 states across all selected SNP positions in order to define similarities between samples.
+
+## Distribution of IBS2 proportion values
+
+
+```{r}
+# Proportion of identical genotypes between sammples
+ibsNum = snpgdsIBSNum(genofile, snp.id=snpset.id, num.thread=8, verbose=F)
+```
+
+```{r, fig.cap="Proportion of IBS2 between genotypes of all samples"}
+i = ibsNum$ibs2/(ibsNum$ibs2 + ibsNum$ibs1 + ibsNum$ibs0)
+rownames(i) = samples
+colnames(i) = samples
+i_ut = i
+i_ut[upper.tri(i_ut, diag=T)] = NA
+xx = hist(i_ut,200, plot=F)
+ff = xx$counts
+valid_ticks = seq(1,length(xx$breaks),10)
+names(ff) = xx$mids
+names(ff)[(1:length(ff))[-valid_ticks]] <- NA
+barplot(log10(ff+1),las=2, xlab="Proportion IBS2", ylab="log10(frequency)")
+title("Distribution of IBS2 proportions across all samples")
+```
+
+Note that for pretty much all distances between sample pairs the IBS2 proportion (i.e. proportion of sites with identic genotype among all compared sites) is lower than 0.85. Only a few dozen pairs show IBS2 proportions > 0.9, which are shown below.
+
+# Samples with IBS2 proportions > 0.9
+
+```{r}
+high_concordance_samples = as.data.frame(which(i_ut>0.8 & i_ut<1,arr.ind=T))
+high_concordance_samples$sample_1 <- rownames(i_ut)[high_concordance_samples$row]
+high_concordance_samples$sample_2 <- colnames(i_ut)[high_concordance_samples$col]
+high_concordance_samples$ibs2_prop = apply(as.matrix(high_concordance_samples[,1:2]), 1, function(x) {i_ut[x[1],x[2]]})
+high_concordance_samples = high_concordance_samples[order(high_concordance_samples$sample_1, high_concordance_samples$sample_2),3:5]
+rownames(high_concordance_samples) = NULL
+```
+
+```{r, results='asis'}
+xt = xtable(high_concordance_samples, digits=3)
+print.xtable(xt,type="html")
+```
+
+```{r}
+target_ibs2 = i
+target_ibs2_ut = target_ibs2
+target_ibs2_ut[upper.tri(target_ibs2_ut)] <- NA
+
+```
+
+# Proportion of IBS2 for all samples
+
+```{r, results='asis'}
+ot = xtable(round(target_ibs2_ut,3), digits=3)
+print.xtable(ot,type="html")
+```
+
+### Heatmap of similiarities (IBS2 proportion) between samples
+```{r}
+pheatmap(target_ibs2,scale="none")
+```
+
+### Dendrogram
+
+```{r}
+set.seed(100)
+ibs.hc <- snpgdsHCluster(ibs)
+rv <- snpgdsCutTree(ibs.hc)
+plot(rv$dendrogram, leaflab="perpendicular", main="All samples")
+```
+
+```{r}
+snpgdsClose(genofile)
+```
+

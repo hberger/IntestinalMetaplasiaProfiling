@@ -1,0 +1,365 @@
+---
+title: "Stomach Methylation - Differential Methylation Analysis v02"
+author: "Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Differential_Methylation_CpG_level/")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+setwd("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Differential_Methylation_CpG_level/")
+
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+library(plyr)
+
+
+```
+
+
+# Experimental Design
+
+Gastric epithelial cells of antrum, corpus and fundus were isolated from sleeve resection tissue and cultivated as organoids. After one to two passages, Air-Liquid-Interface (ALI) culture was started and when cells had developed a completly polarized and sealed monolayer, differentiation was induced by removing Wnt and R-spoding from the cell culture medium for seven days. The so obtained samples are:  
+- Antrum undifferentiated (AU)  
+- Antrum differentiated (AD)  
+- Corpus undifferentiated (CU)  
+- Corpus differentiated (CD)  
+- Fundus undifferentiated (FU)  
+- Fundus differentiated (FD)  
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+To analyse the generated data in R, I will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013] and use limma for differential methylation analysis
+
+# Data Import
+
+Raw intensity values were preprocessed and QC checked (see "Preprocessing_and_QC.Rmd"). Here I load the sample annotation and the normalized (SWAN) and batch corrected (for slide) beta values:
+
+```{r Data Import, message=FALSE}
+
+load("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/myLoad.RData")
+
+load("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/myNorm_batch_corrected.RData")
+
+```
+
+Here, I now subset the normalized data set, in order to remove all CpGs that between all samples do not change > 20 %.
+
+```{r}
+
+myNorm_batch_corrected_sub = myNorm_batch_corrected
+
+Diff = rowDiffs(matrixStats::rowRanges(myNorm_batch_corrected_sub))
+
+myNorm_batch_corrected_sub = cbind(myNorm_batch_corrected_sub, Diff)
+  
+myNorm_batch_corrected_sub = subset(myNorm_batch_corrected_sub, Diff > 0.2)
+
+## 62,574
+
+
+  
+```
+
+# Differential Methylation Analysis
+
+The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015] and the subsetted data set:
+
+- AU vs CU  
+- AD vs CD
+- AU vs FU
+- AD vs FD
+- CU vs FU and FU vs CU
+- CD vs FD and FD vs CD
+
+- AD vs AU
+- CD vs CU
+- FD vs FU
+
+- A vs C
+- A vs F
+- C vs F
+
+```{r Differential Methylation Analysis, echo = TRUE, warning=FALSE, message=FALSE}
+
+if(FALSE) {
+  
+  all_results_betas = list()
+  
+  data_matrix = myNorm_batch_corrected_sub
+  ed = myLoad$pd
+  
+  
+  # AU vs CU
+  sel_conditions = c("AU","CU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AU vs. CU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # AD vs CD
+  sel_conditions = c("AD","CD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. CD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # AU vs FU
+  sel_conditions = c("AU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AU vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # AD vs FD
+  sel_conditions = c("AD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. FD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # CU vs FU
+  sel_conditions = c("CU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CU vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # CD vs FD
+  sel_conditions = c("CD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CD vs. FD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  
+  
+    # FU vs CU
+  sel_conditions = c("CU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FU vs. CU"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata))
+  
+  # FD vs CD
+  sel_conditions = c("CD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FD vs. CD"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata)) 
+  
+  # AD vs AU
+  sel_conditions = c("AD","AU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. AU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # CD vs CU
+  sel_conditions = c("CD","CU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CD vs. CU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # FD vs FU
+  sel_conditions = c("FD","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FD vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+
+  
+  # Antrum vs Corpus
+  sel_conditions = c("Antrum","Corpus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Antrum vs. Corpus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  # Antrum vs Fundus
+  sel_conditions = c("Antrum","Fundus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Antrum vs. Fundus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+
+  # Corpus vs Fundus
+  sel_conditions = c("Corpus","Fundus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Corpus vs. Fundus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+ 
+  
+  
+  save(all_results_betas, file="all_results_betas_v02.RData")
+} else {
+  load("all_results_betas_v02.RData")
+}
+
+```
+
+## Volcano Plots
+
+### Subgroups
+
+For each comparison, the distribution of the differential methylation values (delta beta) and the negative logarithm of the adjusted p-values are plotted in the following volcano plots. The red line marks the cutoff of 0.05 of the FDR.
+
+#### FDR < 5%
+
+```{r Volcano Plots adj. p-val, fig.width=12,fig.height = 7.5}
+
+sel_samples = c("AU vs. CU","AD vs. CD", "AU vs. FU", "AD vs. FD","CU vs. FU","CD vs. FD","AD vs. AU","CD vs. CU","FD vs. FU")
+
+all_target_conditions = sel_samples
+par(mfrow=c(3,4))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.05),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+### Groups
+
+Volcano plot of the group comparisons with the cutoff of 5 % FDR marked with a red line.
+
+```{r, fig.width=9,fig.height = 2.5}
+
+sel_samples = c("Antrum vs. Corpus","Antrum vs. Fundus","Corpus vs. Fundus")
+all_target_conditions = sel_samples
+par(mfrow=c(1,3))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.05),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+ 
+
+# Conclusion
+
+The subsetting of the data set leads to more or less the same number of significant (FDR < 5 %) Cgs compared to the previosu analysis, where I did not subset and used the p values as significance filter. 
+
+A better approach might be to perform the statistical analysis with M-values. For this purpose, a new directory is created, because I start already during the preprocessing using M-values.
+
+
+```{r, eval = FALSE}
+sessionInfo()
+```

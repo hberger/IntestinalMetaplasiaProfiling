@@ -1,0 +1,213 @@
+---
+title: "Zhang IM, plus gut cell atlas epithelial cells (adult) from Elmentaite et al. - Preprocessing"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(Seurat)
+library(SeuratDisk)
+library(ggplot2)
+
+library(readxl)
+library(knitr)
+library(data.table)
+library(cowplot)
+
+library(pheatmap)
+
+library(future)
+plan("multicore", workers = 10)
+options(future.globals.maxSize = 10*2**32)
+
+data_storage_folder = "../../../../Data/ExtData/Zhang_scRNA"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+```
+
+```{r}
+reload_data = T
+if(reload_data) {
+  load(file.path(data_storage_folder, "Zhang_IM_EPi_only_cluster_annotated.RData"))
+  sel_cells = rownames(subset(scData.combined@meta.data, label != "Early gastric cancer"))
+  all_ge_data_filtered = subset(scData.combined, cells = sel_cells)
+  rm(scData.combined)
+  gc()
+  all_ge_data_filtered = DietSeurat(all_ge_data_filtered, counts = T, scale.data = F, assays = "RNA", dimreducs = NULL, graphs = NULL)
+  
+  table(all_ge_data_filtered$label)
+  all_ge_data_filtered@meta.data$orig_sample_id = all_ge_data_filtered$orig.ident
+}
+```
+
+
+```{r}
+if(reload_data) {
+  sc_gut = LoadH5Seurat("../../../DataSets/Elmentaite_gut/Raw/epi_raw_counts02_healthy_adult_intestine.h5seurat")
+
+  sc_gut@meta.data$orig.ident = sc_gut$Sample.name
+  sel_samples = as.character(unique(sc_gut$orig.ident))
+  # The excluded sample (A33 414C) has way more cells than the other ones, with many clusters after CCA being exclusively from this sample; some with signs of contamination (CD45+, CD69+,MZB1+ subcluster)
+  sel_samples = sel_samples[!sel_samples == "A33 (414C)"]
+  sc_gut = subset(sc_gut, orig.ident %in% sel_samples)
+}
+```
+
+```{r}
+if(reload_data) {
+  genes_IM = rownames(all_ge_data_filtered@assays$RNA@counts)
+  genes_gut = rownames(sc_gut@assays$RNA@counts)
+
+  genes_shared = intersect(genes_IM, genes_gut)
+
+  meta_cols_IM = colnames(all_ge_data_filtered@meta.data)
+  meta_cols_gut = colnames(sc_gut@meta.data)
+
+  shared_cols = intersect(meta_cols_IM, meta_cols_gut)
+
+  sc_gut@meta.data$DS = "GutCellAtlas"
+  all_ge_data_filtered@meta.data$DS = "ZhangIM"
+
+  for (cc in meta_cols_IM[!meta_cols_IM %in% shared_cols]) {
+      sc_gut = AddMetaData(sc_gut, NA, col.name=cc)
+  }
+
+  for (cc in meta_cols_gut[!meta_cols_gut %in% shared_cols]) {
+      all_ge_data_filtered = AddMetaData(all_ge_data_filtered, NA, col.name=cc)
+  }
+
+  combined_sc_data = merge(subset(all_ge_data_filtered, features = genes_shared), subset(sc_gut, features = genes_shared))
+}
+
+```
+
+
+# Final preprocessing
+
+Since there are several independent batches of samples with partially very different outcomes in terms of processing quality and cell viability we will use data set integration (Stuart and Butler et al., Cell 2019, doi: 10.1016/j.cell.2019.05.031) as implemented in Seurat v3.
+
+
+```{r}
+#old_meta = scData@meta.data
+#scData = combined_sc_data
+
+#scData@meta.data$batch = sc
+#scData@meta.data$Phase = old_meta$Phase
+#scData@meta.data$S.Score = old_meta$S.Score
+#scData@meta.data$G2M.Score = old_meta$G2M.Score
+
+split_data_file = "IM_and_AdultGut_preprocessing_split_data.Rdata"
+if(reload_data) {
+  sc.list <- SplitObject(combined_sc_data, split.by = "orig.ident")
+
+  sc.list <- lapply(X = sc.list, FUN = function(x) {
+      x <- NormalizeData(x)
+      x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+  })
+
+  # for (i in names(sc.list)) {
+  #     sc.list[[i]] <- SCTransform(sc.list[[i]], verbose = FALSE)
+  # }
+  # sc.features <- SelectIntegrationFeatures(object.list = sc.list, nfeatures = 3000)
+  # sc.list <- PrepSCTIntegration(object.list = sc.list, anchor.features = sc.features)
+  
+  save(sc.list, file=file.path(data_storage_folder, split_data_file ), compress = T )
+} else {
+  load(file.path(data_storage_folder, split_data_file))
+}
+```
+
+
+```{r}
+reference_dataset <- which(names(sc.list) == "A34 (417C)")
+sc.anchors = FindIntegrationAnchors(object.list = sc.list, dims = 1:20, reference= reference_dataset)
+gc()
+scData.combined <- IntegrateData(anchorset = sc.anchors, dims = 1:20)
+gc()
+```
+
+
+<!-- ```{r} -->
+<!-- reference_dataset <- which(names(sc.list) == "AGBR024_tail") -->
+
+<!-- sc.anchors <- FindIntegrationAnchors(object.list = sc.list, normalization.method = "SCT",  -->
+<!--     anchor.features = sc.features, reference = reference_dataset) -->
+<!-- scData.combined <- IntegrateData(anchorset = sc.anchors, normalization.method = "SCT") -->
+
+<!-- ``` -->
+
+
+```{r}
+DefaultAssay(scData.combined) <- "integrated"
+all.genes <- rownames(scData.combined)
+scData.combined <- ScaleData(scData.combined, verbose = TRUE, features = all.genes)
+gc()
+scData.combined <- RunPCA(scData.combined, npcs = 30, verbose = TRUE)
+gc()
+
+scData.combined <- RunUMAP(scData.combined, reduction = "pca", dims = 1:20)
+scData.combined <- FindNeighbors(scData.combined, reduction = "pca", dims = 1:20)
+scData.combined <- FindClusters(scData.combined, resolution = 0.5)
+```
+
+```{r}
+save(scData.combined, file=file.path(data_storage_folder, "ZhangIM_and_GutCellAtlas_HealthyAdult_Epi_CCA.RData"), compress = T)
+```
+
+# Global clusters
+
+```{r, fig.width=14}
+DimPlot(scData.combined, reduction = "umap", group.by = "orig.ident")
+
+p1 <- DimPlot(scData.combined, reduction = "umap", group.by = "DS")
+p2 <- DimPlot(scData.combined, reduction = "umap", label = TRUE)
+plot_grid(p1, p2)
+
+DimPlot(scData.combined, reduction = "umap", split.by = "orig.ident", label = T)
+```
+
+## Cluster assignments
+
+```{r}
+m = table(scData.combined@meta.data$seurat_clusters, scData.combined@meta.data$orig.ident)
+kable(m)
+```
+
+
+```{r, fig.height=10, fig.width=8}
+mm = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+mm_rel = sweep(mm, 2, apply(mm, 2,sum), "/")
+pheatmap(mm_rel, main="Relative single cell contribution of each cluster to condition totals")
+```
+
+# Gut Cell Atlas cluster annotations
+
+```{r, fig.width=8, fig.height=6}
+scData.combined <- SetIdent(scData.combined, value="annotation")
+DimPlot(scData.combined, reduction = "umap", label = TRUE)
+```
+
+
+```{r}
+table(scData.combined$annotation, scData.combined$seurat_clusters)
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

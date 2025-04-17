@@ -1,0 +1,217 @@
+---
+title: "pySCENIC visualizations - Zhang IM"
+author: "Hilmar Berger"
+
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message = FALSE}
+library(Seurat)
+#library(escape)
+library(msigdbr)
+
+library(ggplot2)
+library(cowplot)
+library(gridExtra)
+
+#library(Nebulosa)
+
+data_storage_folder = file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_IM_only")
+
+result_folder = "../../../../Results/Zhang_scRNA/PySCENIC_IM_only/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+```
+# Overview
+
+This analysis is based on a PySCENIC analysis of the full data set of Zhang et al gastric samples
+
+```{r}
+load(file.path("../../../../Data/ExtData/Zhang_scRNA", "Zhang_all_cells_CCA.RData"))
+meta <- readRDS("../../../../Data/ExtData/Zhang_scRNA/Zhang_all_cells_CCA_metadata.rds")
+scData <- scData.combined
+rm(scData.combined)
+scData@meta.data <- meta[Cells(scData),]
+```
+
+```{r, fig.height=6, fig.width=8}
+scData <- SetIdent(scData, value="cluster_label")
+DimPlot(scData, label=T) + NoLegend()
+```
+
+
+```{r}
+n="Zhang_IM"
+pyscenic_res = read.table(file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_IM_only",paste0(n,"/auc_mtx.csv")), sep=",", header=T)
+colnames(pyscenic_res) = gsub("\\.\\.\\.", "", colnames(pyscenic_res))
+```
+
+# Score distribution overview
+
+```{r, fig.width=10, fig.height=10}
+all_tf_names = colnames(pyscenic_res)[2:ncol(pyscenic_res)]
+par(mfrow=c(4,4))
+tmp = mapply(function(x,n) hist(x, breaks=100, main=n, xlab="Score", xlim=c(0,1)), pyscenic_res[, all_tf_names], all_tf_names)
+```
+
+# Overview of TF activity in across clusters
+
+```{r, fig.width=12, fig.height=7, warning=FALSE}
+tmp = pyscenic_res[, 2:ncol(pyscenic_res)]
+rownames(tmp) = pyscenic_res$Cell
+scores_ordered = tmp[Cells(scData),]
+
+scData <- SetIdent(scData, value="cluster_label")
+
+all_new_cols = c()
+for (n in all_tf_names) {
+  nc = paste0(n,"_score")
+  scData <- AddMetaData(scData, scores_ordered[, n], col.name = nc)
+  all_new_cols = append(all_new_cols, nc)
+  
+  p1 = FeaturePlot(scData, features = nc, order=T, raster=T)
+  p2 = VlnPlot(scData, features=nc, pt.size = 0.01) + NoLegend()
+  #p3 = plot_density(scData, nc)
+  #layout_matrix = matrix(c(1,2,1,3),2,2)
+  #grid.arrange(grobs = list(p2,p1,p3),ncol=2,nrow=2, layout_matrix = layout_matrix)
+  print(plot_grid(p1,p2,ncol=2))
+}
+
+```
+
+# UMAP
+
+## UMAP on all clusters including stromal cells
+
+```{r}
+if(F) {
+  ab = Seurat::RunUMAP(as.matrix(scores_ordered))  
+  saveRDS(ab, file=file.path(data_storage_folder, "UMAP_on_TF_complete_DS.rds"), compress = T)
+} else {
+  ab = readRDS(file=file.path(data_storage_folder, "UMAP_on_TF_complete_DS.rds"))  
+}
+scData@reductions$pyscenic = ab
+```
+
+```{r, fig.width=14, fig.height=8}
+scData <- SetIdent(scData, value="cluster_label")
+scData$condition = factor(scData$condition, levels=c("Non-atrophic gastritis","Chronic atrophic gastritis", "Mild intestinal metaplasia","Severe intestinal metaplasia", "Early gastric cancer"))
+DimPlot(scData, reduction = "pyscenic", label=T) + NoLegend()
+DimPlot(scData, reduction = "pyscenic", label=T, split.by = "condition", ncol = 3) + NoLegend()
+```
+
+## UMAP only on non-stromal/immune clusters, no GC
+
+```{r}
+meta = scData@meta.data
+sel_cells = subset(meta, (cluster_type =="Epi" & !(condition == "Early gastric cancer") ) )
+sel_cell_ids = rownames(sel_cells)
+sel_cell_ids = sel_cell_ids[sel_cell_ids %in% rownames(scores_ordered)]
+tmp =as.matrix(scores_ordered[sel_cell_ids, ])
+
+if(FALSE) {
+  ab_filtered = Seurat::RunUMAP(tmp)
+  saveRDS(ab_filtered, file=file.path(data_storage_folder, "UMAP_on_TF_epithelial_only.rds"), compress=T)
+} else {
+  ab_filtered = readRDS(file=file.path(data_storage_folder, "UMAP_on_TF_epithelial_only.rds"))
+}
+
+scData_filtered = subset(scData, cells = sel_cell_ids)
+scData_filtered@reductions$pyscenic = ab_filtered
+```
+
+```{r, fig.width=12, fig.height=7}
+scData_filtered$condition = factor(scData_filtered$condition, levels=c("Non-atrophic gastritis","Chronic atrophic gastritis", "Mild intestinal metaplasia","Severe intestinal metaplasia"))
+DimPlot(scData_filtered, reduction = "pyscenic", label=T) + NoLegend()
+
+
+DimPlot(scData_filtered, reduction = "pyscenic", label=T, split.by = "condition") + NoLegend()
+```
+
+```{r}
+set.seed(20240430)
+scData_filtered <- FindNeighbors(scData_filtered, reduction = "pyscenic", graph.name = c("pyscenic_nn", "pyscenic_snn"), dims = 1:2 )
+scData_filtered <- FindClusters(scData_filtered, graph.name = "pyscenic_snn", resolution = 0.05)
+```
+
+```{r}
+DimPlot(scData_filtered, reduction = "pyscenic", label=T)
+```
+
+```{r}
+m = table(scData_filtered$cluster_label, scData_filtered$seurat_clusters)
+m
+```
+
+```{r}
+library(pheatmap)
+pheatmap(m)
+```
+
+```{r}
+m <- table(scData_filtered$seurat_clusters, scData_filtered$condition)
+pheatmap(prop.table(m, margin = 2))
+```
+
+```{r, fig.width=10, fig.height=5}
+sel_genes = c("LGR5","MUC6","MUC5AC","GAST","TFF1","TFF2","TFF3","VIL1","MUC2","SPINK4","DMBT1","CDX2","OLFM4","AXIN2")
+DotPlot(scData_filtered, features=sel_genes, group.by="seurat_clusters", cols = "RdYlBu", assay = "RNA") + theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+
+```{r, fig.width=10, fig.height=10}
+DotPlot(scData_filtered, features=sel_genes, group.by="seurat_clusters", cols = "RdYlBu", split.by="condition", assay="RNA")  + theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+
+# DE
+
+```{r}
+library(limma)
+
+inp_mat = as.matrix(scores_ordered[Cells(scData_filtered),])
+
+cluster = paste0("C",scData_filtered@meta.data[rownames(inp_mat), "seurat_clusters"] )
+
+TS = factor(cluster)
+
+design <- model.matrix(~0+TS)
+colnames(design) = gsub("^TS","", colnames(design))
+
+fit <- lmFit(t(inp_mat), design)
+contrast.matrix <- makeContrasts(C5.4 = C5-C4,
+                                 C5.3 = C5-C3,
+                                 C5.2 = C5-C2,
+                                 C5.1 = C5-C1,
+                                 C5.0 = C5-C0,
+                                 C1.3 = C1-C3, 
+                                 C1.2 = C1-C2, 
+                                 C1.4 = C1-C4,
+                                 C1.0 = C1-C0,
+                                 levels=design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+results <- decideTests(fit2, lfc = 0.07)
+
+ab = topTable(fit2, number = ncol(inp_mat))
+
+```
+
+```{r, fig.width=8, fig.height=8}
+aa = as.data.frame(results)
+aa_sig = aa[apply(abs(aa), 1, max)>0, ]
+pheatmap(as.matrix(aa_sig), fontsize_row = 8 )
+
+```
+
+

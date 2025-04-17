@@ -1,0 +1,228 @@
+---
+title: "Yue IMO, plus gut cell atlas epithelial cells (adult) from Elmentaite et al. - Preprocessing"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(Seurat)
+library(SeuratDisk)
+library(ggplot2)
+
+library(readxl)
+library(knitr)
+library(data.table)
+library(cowplot)
+
+library(pheatmap)
+
+library(bbknnR)
+library(harmony)
+
+source("../../Utils/combine_Seurat_ds.R")
+source("../../Utils/downsample_seurat.R")
+
+library(future)
+plan("multicore", workers = 10)
+options(future.globals.maxSize = 10*2**32)
+
+data_storage_folder = "../../../Data/ExtData/Yue_scRNA_IMO"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+```
+
+```{r}
+reload_data = T
+if(reload_data) {
+  load(file.path(data_storage_folder, "All_Filtered_scData.Rdata"))
+  meta <- readRDS(file.path(data_storage_folder, "Yue_IMO_metadata.rds"))
+  all_ge_data_filtered@meta.data <- meta[match(Cells(all_ge_data_filtered), rownames(meta)),]
+  
+  all_ge_data_filtered@meta.data$orig_sample_id = all_ge_data_filtered$orig.ident
+  all_ge_data_filtered@meta.data$DS = "Yue_IMO"
+}
+```
+
+
+```{r}
+if(reload_data) {
+  sc_gut = LoadH5Seurat("../../../Data/ExtData/GCA/epi_raw_counts02_healthy_adult_intestine.h5seurat")
+
+  sc_gut@meta.data$orig.ident = sc_gut$Sample.name
+  sel_samples = as.character(unique(sc_gut$orig.ident))
+  # The excluded sample (A33 414C) has way more cells than the other ones, with many clusters after CCA being exclusively from this sample; some with signs of contamination (CD45+, CD69+,MZB1+ subcluster)
+  sel_samples = sel_samples[!sel_samples == "A33 (414C)"]
+  sc_gut@meta.data <- droplevels(sc_gut@meta.data)
+  sc_gut = subset(sc_gut, orig.ident %in% sel_samples)
+  sc_gut@meta.data$Condition <- sc_gut$Region
+  sc_gut@meta.data$cluster_label <- sc_gut$annotation
+  sc_gut@meta.data$DS <- "GCA"
+}
+```
+
+```{r}
+combined_sc_data <- combine_2_ds(all_ge_data_filtered, sc_gut, shared_features_only = T)
+LayerData <- function(obj, assay="RNA", layer="counts") { slot(slot(combined_sc_data, "assays")[[assay]], layer) }
+combined_sc_data <- downsample_to_median_read_count(combined_sc_data, target_median_lib_size = 5000, min_detected_cells = 3)
+
+```
+
+
+# Final preprocessing
+
+
+
+```{r}
+set.seed(20230808)
+# split_data_file = "YueIMO_and_AdultGut_preprocessing_split_data.Rdata"
+# if(reload_data) {
+  sc.list <- SplitObject(combined_sc_data, split.by = "orig.ident")
+
+  sc.list <- lapply(X = sc.list, FUN = function(x) {
+      x <- NormalizeData(x)
+      x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+  })
+
+#   save(sc.list, file=file.path(data_storage_folder, split_data_file ), compress = T )
+# } else {
+#   load(file.path(data_storage_folder, split_data_file))
+# }
+```
+
+```{r}
+# score cell cycle aross the whole data set, then determine variable features from integrated data, excluding any nown cell cycle genes.
+set.seed(20230808)
+
+cell_cycle_genes1 = read.table("../../../Data/ExtData/genesets/Proliferation_associated_genes_Schwede_et_al_2013.txt", sep="\t", header = T)
+library(org.Hs.eg.db)
+cc_genes1 = select(org.Hs.eg.db, keys=cell_cycle_genes1$ENSGENEID, keytype = "ENSEMBL", columns="SYMBOL")
+
+var_features = SelectIntegrationFeatures(sc.list)
+var_features = var_features[!var_features %in% cc_genes1$SYMBOL]
+
+scData.combined <- merge(sc.list[[1]], sc.list[2:length(sc.list)])
+DefaultAssay(scData.combined) <- "RNA"
+
+all.genes <- rownames(scData.combined)
+scData.combined <- CellCycleScoring(scData.combined, s.features = cc.genes.updated.2019$s.genes, g2m.features = cc.genes.updated.2019$g2m.genes)
+scData.combined <- ScaleData(scData.combined, verbose = TRUE, features = var_features, vars.to.regress = c("S.Score","G2M.Score"))
+scData.combined <- RunPCA(scData.combined, npcs = 30, verbose = TRUE, features = var_features)
+scData.combined <- RunBBKNN(scData.combined, reduction = "pca", batch_key = "orig.ident", n_pcs = 30, run_TSNE = F)
+scData.combined <- FindClusters(scData.combined, resolution = 0.9, graph.name = "bbknn")
+```
+
+
+
+<!-- ```{r} -->
+<!-- # score cell cycle aross the whole data set, then determine variable features from integrated data, excluding any nown cell cycle genes.  -->
+<!-- set.seed(20230808) -->
+
+<!-- scData <- combined_sc_data -->
+<!-- rm(combined_sc_data) -->
+<!-- scData <- NormalizeData(object = scData, normalization.method = "LogNormalize", scale.factor = 1e4) -->
+<!-- scData <- FindVariableFeatures(object = scData, selection.method = "vst") -->
+
+
+<!-- cell_cycle_genes1 = read.table("../../../Data/ExtData/genesets/Proliferation_associated_genes_Schwede_et_al_2013.txt", sep="\t", header = T) -->
+<!-- library(org.Hs.eg.db) -->
+<!-- cc_genes1 = select(org.Hs.eg.db, keys=cell_cycle_genes1$ENSGENEID, keytype = "ENSEMBL", columns="SYMBOL") -->
+
+<!-- # var_features = SelectIntegrationFeatures(sc.list) -->
+<!-- # var_features = var_features[!var_features %in% cc_genes1$SYMBOL] -->
+
+<!-- # scData.combined <- merge(sc.list[[1]], sc.list[2:length(sc.list)]) -->
+<!-- # DefaultAssay(scData.combined) <- "RNA" -->
+
+<!-- #VariableFeatures(scData.combined) <- var_features -->
+
+<!-- scData.combined <- CellCycleScoring(scData,  -->
+<!--                                     s.features = cc.genes.updated.2019$s.genes,  -->
+<!--                                     g2m.features = cc.genes.updated.2019$g2m.genes) -->
+<!-- #scData.combined <- ScaleData(scData.combined, verbose = TRUE, features = var_features, vars.to.regress = c("S.Score","G2M.Score")) -->
+<!-- scData.combined <- ScaleData(scData.combined, verbose = TRUE, vars.to.regress = c("S.Score","G2M.Score")) -->
+<!-- # scData.combined <- RunPCA(scData.combined, npcs = 30, verbose = TRUE, features = var_features) -->
+<!-- # scData.combined <- RunBBKNN(scData.combined, reduction = "pca", batch_key = "orig.ident", n_pcs = 30, run_TSNE = F) -->
+<!-- # scData.combined <- FindClusters(scData.combined, resolution = 0.9, graph.name = "bbknn") -->
+
+<!-- scData <- RunPCA(scData.combined, npcs = 50) -->
+<!-- scData <- RunHarmony(scData,  -->
+<!--                      group.by.vars = c("DS","orig.ident"),  -->
+<!--                      dims.use = 1:30) -->
+<!-- scData <- RunUMAP(scData, reduction = "harmony", dims = 1:15) -->
+<!-- scData <- FindNeighbors(scData, reduction = "harmony", dims = 1:15) -->
+<!-- scData <- FindClusters(scData, resolution = 0.5) -->
+<!-- scData.combined <- scData -->
+
+<!-- ``` -->
+
+
+
+
+```{r}
+saveRDS(scData.combined, file.path(data_storage_folder, "YueIMO_and_GutCellAtlas_HealthyAdult_Epi_BBKNN_CC_adjusted.rds"), compress = T)
+
+#scData.combined <- readRDS(file.path(data_storage_folder, "YueIMO_and_GutCellAtlas_HealthyAdult_Epi_BBKNN_CC_adjusted.rds"))
+```
+
+
+# Global clusters
+
+```{r, fig.width=14}
+DimPlot(scData.combined, reduction = "umap", group.by = "orig.ident", raster=T)
+
+p1 <- DimPlot(scData.combined, reduction = "umap", group.by = "DS", raster=T)
+p2 <- DimPlot(scData.combined, reduction = "umap", label = TRUE, raster=T)
+plot_grid(p1, p2)
+
+DimPlot(scData.combined, reduction = "umap", split.by = "DS", label = T, raster=T)
+DimPlot(scData.combined, reduction = "umap", split.by = "Condition", label = T, raster=T, ncol=6)
+
+DimPlot(scData.combined, reduction = "umap", group.by = "cluster_label", label = T, raster=T)
+
+DimPlot(scData.combined, reduction = "umap", group.by = "cluster_label", split.by="DS", label = T, raster=T)
+```
+
+## Cluster assignments
+
+```{r}
+m = table(scData.combined@meta.data$seurat_clusters, ifelse(scData.combined$DS == "GCA", scData.combined@meta.data$orig.ident, scData.combined$sample_label) )
+kable(m)
+```
+
+
+```{r, fig.height=10, fig.width=8}
+mm = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+mm_rel = sweep(mm, 2, apply(mm, 2,sum), "/")
+pheatmap(mm_rel, main="Relative single cell contribution of each cluster to condition totals")
+```
+
+# Gut Cell Atlas cluster and Yue IMO annotations
+
+```{r, fig.width=8, fig.height=6}
+DimPlot(scData.combined, reduction = "umap", label = TRUE, group.by="annotation", raster=T) + NoLegend()
+DimPlot(scData.combined, reduction = "umap", group.by = "cluster_label", label = TRUE, raster=T) + NoLegend()
+```
+
+
+```{r}
+table(scData.combined$annotation, scData.combined$seurat_clusters)
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

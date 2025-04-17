@@ -30,6 +30,7 @@ data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm/"
 
 ```
 
+
 # Analysis
 
 Here I load the list of differentially methylated CpGs (filtered by |logFC|>0.2 and raw p<0.001) between the comparisons and perform LOLA distinguishing between hyper- and hypomethylated CpGs. All CpGs after will be used as the universe.   
@@ -41,8 +42,8 @@ load("../../../../Data/Processed/ClonalCultures/DNAm/myNorm_IM_nonIM_and_healthy
 anno = myNorm_anno_sorted[, c("CHR","MAPINFO")]
 ```
 
-
 # Enrichment of DM genes in functional / genomic categories
+
 
 ```{r}
 tmp = all_results_betas_annotated[["IMvsNormalAntrum"]]

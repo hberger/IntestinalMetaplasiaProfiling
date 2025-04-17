@@ -1,0 +1,194 @@
+---
+title: "Stomach Methylation - IM/non-IM vs. corresponding healthy samples, 450k + EPIC, classification in uu/um/mm sites in healthy antrum"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+library(ggplot2)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+source("../../../Utils/pheatmap.type.R")
+
+```
+
+
+```{r}
+cpg_class_def <- readRDS("../../../../Data/Processed/CpG_classifications_u.m_EPIC_and_WGS.rds")
+```
+
+
+# Overview
+
+We here use data from healthy antrum Infinium EPIC arrays or the WGBS atlas epithelial samples to classify CpG sites into three classes - biallelically methylated (mm), biallelically unmethylated (uu) and hemimethylated (um) sites. 
+
+```{r}
+m <- table(cpg_class_def$Antrum_EPIC, cpg_class_def$Gastric.antrum_WGS, dnn=c("EPIC","WGS"))
+m
+prop.table(m) |> round(digits = 3)
+prop.table(m) |> pheatmap::pheatmap(main = "Antrum EPIC (rows) vs. WGBS Antrum CpG classes")
+
+table(cpg_class_def$Antrum_EPIC==cpg_class_def$Gastric.antrum_WGS, dnn="Concordance") |> prop.table()
+
+```
+
+
+
+# IM DM results
+
+See DGE_Result_Overview.html for definitions of hyper/hypomethylated CpG cutoff values.
+
+
+```{r}
+load(file.path(data_storage_folder, "Methylation_DM_lists.Rdata"))
+```
+
+## Hyper-CpGs
+
+```{r}
+sapply(all_hyper_cpg, nrow)
+```
+## Hypo-CpGs
+
+```{r}
+sapply(all_hypo_cpg, nrow)
+```
+
+```{r}
+dm_to_methylation_class <- function(comp_name) {
+  
+  tmp <- rbind(all_hyper_cpg[[comp_name]], all_hypo_cpg[[comp_name]])
+  tmp$direction_im <- ifelse(tmp$logFC > 0, "hyper","hypo")
+  tmp$dge_class <- with(tmp, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+  
+  dm_with_meth_class <- merge(cpg_class_def, tmp, by.x="ID", by.y="Row.names", all.x=T, sort=F)
+  dm_with_meth_class$dge_class <- ifelse(is.na(dm_with_meth_class$dge_class), "ns/nc", dm_with_meth_class$dge_class)
+  dm_with_meth_class$direction_im <- ifelse(is.na(dm_with_meth_class$direction_im), "ns/nc", dm_with_meth_class$direction_im)
+  
+  return(dm_with_meth_class)
+}
+```
+
+
+
+# IM vs. Non-IM, only new (EPIC) samples - EPIC antrum methylation calls
+
+
+```{r}
+comp = "IM_vs_nonIM"
+dm_and_mc <- dm_to_methylation_class(comp)
+```
+
+```{r}
+# table(dm_and_mc$Antrum_EPIC)
+# table(dm_and_mc$Antrum_EPIC) |> prop.table()
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)"))
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)")) |> prop.table(margin=1)
+
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)")) |> prop.table(margin=1)
+
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.body_WGS, dnn=c("DGE class","Meth. state in healthy corpus (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.body_WGS, dnn=c("DGE class","Meth. state in healthy corpus (WGBS)")) |> prop.table(margin=1)
+
+
+
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)")) |> prop.table(margin=1)
+
+```
+
+
+
+# IM and non-IM vs. healthy, 450k + EPIC samples - EPIC antrum methylation calls
+
+```{r}
+comp = "IM_vs_healthy_450k_and_EPIC"
+dm_and_mc <- dm_to_methylation_class(comp)
+```
+
+```{r}
+# table(dm_and_mc$Antrum_EPIC)
+# table(dm_and_mc$Antrum_EPIC) |> prop.table()
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)"))
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)")) |> prop.table(margin=1)
+
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)")) |> prop.table(margin=1)
+
+
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)")) |> prop.table(margin=1)
+
+```
+
+# IM  vs. healthy, only EPIC samples - EPIC antrum methylation calls
+
+```{r}
+comp = "IM_vs_healthy" 
+dm_and_mc <- dm_to_methylation_class(comp)
+```
+
+```{r}
+# table(dm_and_mc$Antrum_EPIC)
+# table(dm_and_mc$Antrum_EPIC) |> prop.table()
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)"))
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)")) |> prop.table(margin=1)
+
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)")) |> prop.table(margin=1)
+
+
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)")) |> prop.table(margin=1)
+
+```
+
+
+# non-IM  vs. healthy, only EPIC samples - EPIC antrum methylation calls
+
+```{r}
+comp = "nonIM_vs_healthy" 
+dm_and_mc <- dm_to_methylation_class(comp)
+```
+
+```{r}
+# table(dm_and_mc$Antrum_EPIC)
+# table(dm_and_mc$Antrum_EPIC) |> prop.table()
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)"))
+table(dm_and_mc$dge_class, dm_and_mc$Antrum_EPIC, dnn=c("DGE class","Meth. state in healthy antrum (EPIC)")) |> prop.table(margin=1)
+
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Gastric.antrum_WGS, dnn=c("DGE class","Meth. state in healthy antrum (WGBS)")) |> prop.table(margin=1)
+
+
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)"))
+table(dm_and_mc$dge_class, dm_and_mc$Colon.Left_WGS, dnn=c("DGE class","Meth. state in healthy Colon (desc.) (WGBS)")) |> prop.table(margin=1)
+
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

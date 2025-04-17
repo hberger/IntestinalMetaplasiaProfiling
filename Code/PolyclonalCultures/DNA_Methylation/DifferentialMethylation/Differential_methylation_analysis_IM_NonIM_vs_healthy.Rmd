@@ -87,11 +87,13 @@ rownames(cc) <- paste0(ed[rownames(cc), "PatientID"], "_", ed[rownames(cc), "Sam
 pheatmap(cc, main="Correlation on probes with beta range > 0.2")
 ```
 
-
+From the earlier QC and this correlation analysis, the IM and non-IM samples of P_52 (M17 + M18) cluster exactly opposite (possible sample mixup?) and should be excluded. Also, M19 (P_54_IM) ans M23 (P_20_IM) have a lower correlation with the rest of the samples (bisulfite conversion problems?) but these two samples still cluster with other IM samples in the MDS plots, so we will keep them. 
 
 # Differential Methylation Analysis
 
 The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015] and the subsetted data set:
+
+- IM vs. non-IM samples, blocking by patient [IMvsNonIM]. Since most of the IM samples are from antrum and most of the non-IM from corpus this will also identify antrum vs. corpus DM probes. 
 
  <!-- - on per-patient and condition/site average samples, IM vs. Normal (adjusting for stomach site). This is not ideal since there are no Corpus/Fundus IM samples [IMvsNormal] -->
 
@@ -113,18 +115,21 @@ This is done for IM [IMvsNormal_site.adj] and for non-IM samples [nonIMvsNormal_
 
 
 ```{r}
-wgs_dm_anno <- readRDS("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/WGS_DM_Gut_vs_Stomach.rds")
+wgs_dm_anno <- readRDS("../../../../Data/Processed/WGBS/WGS_DM_Gut_vs_Stomach.rds")
 u.m_anno <- readRDS("../../../../Data/Processed/CpG_classifications_u.m_EPIC_and_WGS.rds")
 ```
 
 
 ```{r Differential Methylation Analysis}
+excluded_samples <- c("M17","M18")
+ed_orig <- ed
 
 if(rerun_DGE) {
   
   all_results_betas = list()
   
-  data_matrix = myNorm_sub
+  data_matrix = myNorm_sub[, !colnames(myNorm_sub) %in% excluded_samples]
+  ed <- subset(ed, !Sample_ID %in% excluded_samples)  
 
   normal_samples <- subset(ed, Sample_Group == "Normal") |> as.data.frame()
   im_nonim_samples <- subset(ed, Sample_Group != "Normal") |> as.data.frame()
@@ -132,8 +137,30 @@ if(rerun_DGE) {
   normal_avg <- avearrays(data_matrix[, rownames(normal_samples)], ID = paste0(normal_samples$PatientID, "_Normal_", normal_samples$Stomach_site) )
   im_avg <- avearrays(data_matrix[, rownames(im_nonim_samples)], ID = paste0(gsub("_", ".", im_nonim_samples$PatientID), "_", gsub("_", ".", im_nonim_samples$Sample_Group), "_", im_nonim_samples$Stomach_site))
   
+  avg_combined <- cbind(normal_avg, im_avg)  
   
-  avg_combined <- cbind(normal_avg, im_avg)
+  
+  ##############################################################################
+  # IM vs. IM, pairwise
+  ##############################################################################
+  
+  sel_conditions = c("IM","NON_IM")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$PatientID)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["IMvsNonIM"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  ##############################################################################
+  # site adjusted analysis
+  ##############################################################################
+  
   tmp <- strsplit(colnames(avg_combined),"_")
   ed2 <- data.frame(row.names = colnames(avg_combined), 
                    patient = sapply(tmp, `[`, 1), 

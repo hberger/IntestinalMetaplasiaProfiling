@@ -1,0 +1,119 @@
+---
+title: "MB044 RNA-Seq analysis for phenotyping of gastric clones HISAT2 alignment to hg38, featureCounts - Visualizations"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, warning=FALSE, message=FALSE}
+rm(list=ls())
+
+#suppressMessages(library(xlsx))
+library(readxl)
+library(reshape2)
+library(pheatmap)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(fgsea)
+library(data.table)
+library(homologene)
+library(GSVA)
+
+result_folder = paste("./Results",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+library(ggvenn)
+
+```
+
+```{r}
+#load("./Results/2020-07-06/DGE_analysis_image.Rdata")
+load("./Results/2021-07-23/DGE_analysis_image.Rdata")
+norm_counts = read.table("./Results/2021-07-23/Normalized_expression_data.txt", sep="\t", header=T, stringsAsFactors = F)
+colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+#gsea_gmt_file = "/data_genome1/References/GeneSets/MSigDB/V6.2/msigdb.v6.2.symbols.gmt"
+gsea_gmt_file = "/home/hilmar/Work/References/GeneSets/MSigDB/v7.1/msigdb.v7.1.symbols.gmt"
+gsets <- gmtPathways(gsea_gmt_file)
+```
+
+
+```{r}
+cdx2_gs_names = names(gsets)[grepl("CDX2",names(gsets))]
+
+cdx2_sets = gsets[cdx2_gs_names]
+cdx2_sets[["BOYD_CDX2_TARGETS"]] = fread("/home/hilmar/Work/References/GeneSets/TargetGenes/CDX2/unique_cdx2_target_genes.txt", header=F)$V1
+
+tmp_env = new.env()
+load("../../../../Other_DS/Singh_HNF4A_CDX2/Results/2022-10-27/DGE_analysis_image.Rdata", envir = tmp_env)
+tmp_res = get("all_results", tmp_env)
+m2h_t = mouse2human(tmp_res[[1]]$GeneSymbol, db=homologeneData2)
+m2h = tapply(m2h_t$humanGene, m2h_t$mouseGene, function(x) paste(x, collapse=","))
+
+m2h_f = function(x) m2h[as.character(x[!is.na(x) & !x=="NA" & !x==""])]
+
+cdx2_sets[["SINGH_CDX2_UP"]] = m2h_f(subset(tmp_res[["CDX2_vs_GFP"]], padj < 0.05 & log2FoldChange > 0)$GeneSymbol)
+cdx2_sets[["SINGH_CDX2_DN"]] = m2h_f(subset(tmp_res[["CDX2_vs_GFP"]], padj < 0.05 & log2FoldChange < 0)$GeneSymbol)
+cdx2_sets[["SINGH_HNF4A_UP"]] = m2h_f(subset(tmp_res[["HNF4A_vs_GFP"]], padj < 0.05 & log2FoldChange > 0)$GeneSymbol)
+cdx2_sets[["SINGH_HNF4A_DN"]] = m2h_f(subset(tmp_res[["HNF4A_vs_GFP"]], padj < 0.05 & log2FoldChange < 0)$GeneSymbol)
+```
+
+```{r, fig.width=8, fig.height=6}
+all_ovlp = list()
+sel_comparisons = c("IM_vs_non-IM_all_samples","IM_591_vs_NonIM","IM_592_vs_NonIM","IM_594_vs_NonIM","IM_all_vs_NormalAntrum","Colon_vs_NormalAntrum","Duodenum_vs_NormalAntrum")
+fc_threshold = 0.5
+for (n in sel_comparisons) {
+  tmp = all_results[[n]]
+  r_up = subset(tmp, padj < 0.05 & log2FoldChange > fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+  r_down = subset(tmp, padj < 0.05 & log2FoldChange < -fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+  
+  for (gs in names(cdx2_sets)) {
+    set_genes = cdx2_sets[[gs]]
+    all_ovlp[[paste0(n,"_UP_",gs)]] = intersect(set_genes, r_up$GeneSymbol)  
+    all_ovlp[[paste0(n,"_DOWN_",gs)]] = intersect(set_genes, r_down$GeneSymbol)
+    
+    ll = list()
+    ll[[gs]]=set_genes
+    ll[[paste0(n,"_UP")]] = r_up$GeneSymbol
+    ll[[paste0(n,"_DOWN")]] = r_down$GeneSymbol
+    
+    p = ggvenn(ll, set_name_size = 4) 
+    print(p)
+    
+  }
+}
+  
+  
+```
+
+```{r}
+lapply(all_ovlp[grep("SINGH_CDX2_UP", names(all_ovlp))], sort)
+#lapply(all_ovlp[grep("SINGH_CDX2_DN", names(all_ovlp))], sort)
+```
+# GSVA
+
+```{r}
+count_mat = as.matrix(norm_counts[,grepl("^X4", colnames(norm_counts))])
+rownames(count_mat) <- norm_counts$GeneSymbol
+res_gsva = gsva(count_mat, cdx2_sets)
+colnames(res_gsva) = ed[gsub("X","", colnames(res_gsva)), "Library.Name"]
+```
+
+```{r, fig.width=8}
+
+pheatmap(res_gsva)
+pheatmap(res_gsva[c("SINGH_CDX2_UP","SINGH_HNF4A_UP"),])
+```
+

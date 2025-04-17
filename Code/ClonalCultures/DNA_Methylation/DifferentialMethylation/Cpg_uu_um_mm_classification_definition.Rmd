@@ -81,13 +81,14 @@ See Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/Antrum_met
 [0=uu, 1=um, 2=mm]
 
 ```{r}
-cpg_class_wgs <- readRDS(file.path("../../../../Data/ExtData/Other_Methylation_data/GSE186458_WGBS_Atlas/Analysis/", "WGS_Cpg_Meth_classes_EPIC.rds"))
+cpg_class_wgs <- readRDS("../../../../Data/Processed/WGBS/WGS_Cpg_Meth_classes_EPIC.rds")
 ```
 
 
 ```{r}
 table(cpg_class_wgs[, "Gastric.antrum"])
 ```
+
 ```{r}
 # this is very slow and in fact I don't know if it ever returns without error
 # tmp <- merge(cpg_class_u.m_array, as.data.frame(cpg_class_wgs), by.x=0, by.y=0, all.y=T, all.x=T)
@@ -118,7 +119,7 @@ table(tmp$Antrum_EPIC == tmp$Gastric.antrum_WGS, dnn="Concordance Antrum CpG") |
 We export the full table of CpGs with classification in EPIC methylation array (Antrum, Corpus) and WGS (Gastric fundus/corpus/antrum, SI, Colon left / right) to file *CpG_classifications_u.m_EPIC_and_WGS.rds*.
 
 ```{r}
-saveRDS(tmp, file=file.path(data_storage_folder,"../..",  "CpG_classifications_u.m_EPIC_and_WGS.rds"), compress=T)
+saveRDS(tmp, file="../../../../Data/Processed/CpG_classifications_u.m_EPIC_and_WGS.rds", compress=T)
 ```
 
 

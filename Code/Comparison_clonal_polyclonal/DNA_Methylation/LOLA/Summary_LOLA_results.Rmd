@@ -1,0 +1,211 @@
+---
+title: "Summary of LOLA results"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+library(scales)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(data.table)
+```
+
+
+# Data
+
+LOLA was performed for DM, hyper-, and hypomethylated Cgs different conditions using all Cgs of the normalized data set as the universe.
+
+
+```{r}
+data_storage_folder_cc = "../../../../Data/Processed/ClonalCultures/DNAm/"
+data_storage_folder_pc = "../../../../Data/Processed/PolyclonalCultures/DNAm/"
+```
+
+```{r}
+all_result_tabs <- list()
+```
+
+
+```{r}
+transform_tab <- function(x, study, db , comparison) {
+  if(!inherits(x, "data.table")) x <- as.data.table(x)
+  x$study <- study
+  x$DB <- db
+  x$comparison <- comparison
+  x$ID = paste0(x$collection, "_", x$description) |> make.unique()
+  
+  x$OddsRatio <- x$logOddsRatio
+  x$logOddsRatio <- log2(x$OddsRatio)
+
+  x$untreated = with(x, !complete.cases(treatment) | treatment == "None" | treatment == "No treatment" | treatment == "regular medium" | treatment == "serum_starved_media" | treatment == "serum_stimulated_media" | treatment == "full media" | treatment == "mock" | treatment == "No treatment(Antibody RAR _A704)" | treatment == "No treatment(Antibody RXR _sc774)" )
+
+  x$comp_direction <- ifelse(grepl("_hyper$",comparison), "Hyper", ifelse(grepl("_hypo$", comparison), "Hypo", "other") )
+
+  x$comp_ID <- paste0(x$study, "__", x$comparison)
+  x$collection_ID <- paste0(x$DB, "__", x$collection)
+  
+  x[, pos_rank := rank(ifelse(p.adj < 0.05, -logOddsRatio, NA)), by="collection_ID"]
+  x[, neg_rank := rank(ifelse(p.adj < 0.05, logOddsRatio, NA)), by="collection_ID"]
+  
+  return(x)
+}
+```
+
+
+```{r}
+tmp.env <- new.env()
+load(file.path(data_storage_folder_cc, "LOLA_Core_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "CC","LOLA_Core", names(tmp), SIMPLIFY = F)
+all_results <- do.call(rbind, tmp)
+
+load(file.path(data_storage_folder_cc, "LOLA_Ext_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "CC","LOLA_Ext", names(tmp), SIMPLIFY = F)
+all_results <- rbind(all_results, do.call(rbind, tmp))
+
+load(file.path(data_storage_folder_cc, "LOLA_custom_Hpy_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- lapply(tmp, function(x) {x$description <- gsub(".bed", "", gsub("Hpy_infection_primary_","Hpy_", x$filename), fixed = T); x})
+tmp <- mapply(FUN = transform_tab, tmp, "CC","Hpy_infection", names(tmp), SIMPLIFY = F)
+all_results <- rbind(all_results, do.call(rbind, tmp))
+
+all_result_tabs[["CC"]] <- all_results
+
+```
+
+
+```{r}
+tmp.env <- new.env()
+load(file.path(data_storage_folder_pc, "LOLA_Core_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "PC","LOLA_Core", names(tmp), SIMPLIFY = F)
+all_results <- do.call(rbind, tmp)
+
+load(file.path(data_storage_folder_pc, "LOLA_Ext_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "PC","LOLA_Ext", names(tmp), SIMPLIFY = F)
+all_results <- rbind(all_results, do.call(rbind, tmp))
+
+load(file.path(data_storage_folder_pc, "LOLA_custom_Hpy_results.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- lapply(tmp, function(x) {x$description <- gsub(".bed", "", gsub("Hpy_infection_primary_","Hpy_", x$filename), fixed = T); x})
+tmp <- mapply(FUN = transform_tab, tmp, "PC","Hpy_infection", names(tmp), SIMPLIFY = F)
+all_results <- rbind(all_results, do.call(rbind, tmp))
+
+all_result_tabs[["PC"]] <- all_results
+```
+
+
+```{r}
+all_results_final <- do.call(rbind, all_result_tabs)
+rm(tmp.env, all_result_tabs, all_results)
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+m <-with(subset(all_results_final, p.adj < 0.05), table( comp_ID, collection_ID))
+m
+pheatmap(m, scale="column")
+```
+
+
+
+
+```{r}
+
+all_results_final$label = ifelse(all_results_final$collection %in% c("cistrome_cistrome", "cistrome_epigenome","ucsc_features","sheffield_dnase","encode_tfbs"), gsub("cistrome_cistrome |cistrome_epigenome ", "", all_results_final$description), 
+                   ifelse(all_results_final$collection=="encode_segmentation", paste0(all_results_final$description, "_", all_results_final$cellType),
+                          ifelse(all_results_final$collection == "codex", paste0(all_results_final$cellType, "_", all_results_final$antibody), 
+                                 ifelse(all_results_final$collection == "roadmap_epigenomics", 
+                                        ifelse(all_results_final$description =="roadmap_epigenomics", "DNase", 
+                                               gsub("roadmap_epigenomics ", "", all_results_final$description)), 
+                                        ifelse(all_results_final$description=="jaspar_motifs", 
+                                               gsub("\\.bed","", all_results_final$filename),
+                                               ifelse(all_results_final$collection == "Hpy2D", 
+                                                      gsub(".bed","", all_results_final$filename),  "__MISSING__"  ))))));
+    
+all_results_final$factor = ifelse(all_results_final$collection %in% c("cistrome_cistrome", "cistrome_epigenome","encode_tfbs", "codex"),
+                                  all_results_final$antibody, 
+                                  ifelse(all_results_final$collection=="encode_segmentation", all_results_final$description,
+                                         ifelse(all_results_final$collection == "sheffield_dnase", "DNase", 
+                                                ifelse(all_results_final$collection == "ucsc_features", all_results_final$description,
+                                                       ifelse(all_results_final$collection == "roadmap_epigenomics",
+                                                              ifelse(all_results_final$description =="roadmap_epigenomics", "DNase", all_results_final$antibody), 
+                                                              ifelse(all_results_final$description=="jaspar_motifs", gsub("\\.bed","", all_results_final$filename), 
+                                               ifelse(all_results_final$collection=="Hpy2D",
+                                                      gsub(".bed","",all_results_final$filename),"__MISSING__"  )))))));
+
+
+
+
+```
+
+```{r}
+all_studies <- unique(all_results_final$study)
+all_comps <- unique(all_results_final$comp_ID)
+```
+
+
+
+```{r}
+sel_collections <- c("Hpy_infection__Hpy2D","LOLA_Core__cistrome_cistrome","LOLA_Core__cistrome_epigenome","LOLA_Core__codex","LOLA_Core__encode_segmentation","LOLA_Core__encode_tfbs","LOLA_Core__ucsc_features","LOLA_Ext__jaspar_motifs")
+```
+
+```{r}
+sel_comparisons <- c("CC__IM_vs_nonIM_hyper","CC__IM_vs_nonIM_hypo","CC__IM_vs_healthy_hyper","CC__IM_vs_healthy_hypo","CC__nonIM_vs_healthy_hyper","CC__nonIM_vs_healthy_hypo","PC__IMvsNonIM_hyper","PC__IMvsNonIM_hypo","PC__IMvsNormalAntrum_hyper","PC__IMvsNormalAntrum_hypo")
+#,"CC__IM_vs_healthy_450k_and_EPIC_hyper","CC__IM_vs_healthy_450k_and_EPIC_hypo","PC__IMvsNormal_site.adj_hyper","PC__IMvsNormal_site.adj_hypo","PC__nonIMvsNormal_site.adj_hyper","PC__nonIMvsNormal_site.adj_hypo"
+```
+
+
+```{r}
+data_storage_folder_new <- "../../../../Data/Processed/Comparison_CC_PC/"
+if (!file.exists(data_storage_folder_new)) dir.create(data_storage_folder_new, recursive=T)
+tmp <- subset(all_results_final, comp_ID %in% sel_comparisons)
+saveRDS(tmp, file=file.path(data_storage_folder_new, "LOLA_Results_CC_PC_sel_comparisons.rds"), compress=T)
+```
+
+
+```{r, fig.width=10, fig.height=8}
+for(comp_dir in c("Hyper","Hypo")) {
+  for (sc in sel_collections) {
+    tmp <- subset(all_results_final, p.adj < 0.2 & 
+                     (pos_rank < 10 | neg_rank < 10) &
+                     comp_direction == comp_dir & 
+                     comp_ID %in% sel_comparisons & 
+                     collection_ID == sc)
+    if(nrow(tmp) < 1) next
+
+    df <- reshape2::dcast(tmp, collection_ID + DB + collection + label ~ comp_ID, value.var = "logOddsRatio", fun.aggregate = mean)
+    df$sig_cnt <- rowSums(as.matrix(!is.na(df[, 5:ncol(df)])))
+    
+    #tmp <- subset(df, collection_ID == sc & comp_direction == comp_dir & sig_cnt > 1)
+    if(nrow(df) < 1) next
+    m <- df[, 5:(ncol(df)-1)] |> as.matrix()
+    rownames(m) <- df$label
+    m[is.infinite(m)] <- sign(m[is.infinite(m)]) * 20
+    m2 <- m
+    m2[is.na(m2)] <- 0
+    row_hclust <- hclust(dist(m2), method="mcquitty")
+    breaks <- c(-20,-10,-5,seq(-2,2,by=4/94),5,10,20)
+    pheatmap(m, main=paste0(sc, "- ", comp_dir), cluster_cols=F, cluster_rows = row_hclust, breaks=breaks)
+  }
+}
+```
+
+

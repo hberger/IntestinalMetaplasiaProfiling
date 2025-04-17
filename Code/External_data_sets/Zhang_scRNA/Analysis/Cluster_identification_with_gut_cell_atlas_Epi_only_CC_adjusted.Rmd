@@ -32,6 +32,8 @@ library(future)
 options("future.globals.maxSize"=2**33)
 plan("multicore", workers = 4)
 
+source("../../../Utils/Dotplot_scRNA_v2.2.R")
+
 result_folder = "../../../../Results/Zhang_scRNA/"
 if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
 
@@ -87,7 +89,7 @@ m
 # Final cluster assigment
 
 ```{r}
-cluster_assignment = read.table(file.path(data_storage_folder, "Cluster_assignments/Cluster_assignments_Epi_only_IM_and_intestine_BBKNN_2024-02-23.txt"), sep="\t",header=T, stringsAsFactors = F)
+cluster_assignment = read.table(file.path(data_storage_folder, "Cluster_assignments/Cluster_assignments_Epi_only_IM_and_intestine_BBKNN_2025-04-03.txt"), sep="\t",header=T, stringsAsFactors = F)
 options(width = 180)
 print(cluster_assignment)
 rownames(cluster_assignment) = as.character(cluster_assignment$ClusterID)
@@ -96,19 +98,40 @@ cluster_assignment$Label = factor(cluster_assignment$Label, levels=sort(unique(c
 
 scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Label"], col.name = "cluster_label")
 scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Type"], col.name = "cluster_type")
+
+scData.combined$cluster_label <- factor(scData.combined$cluster_label, levels=c("Sto gland base","Pit cells 1","Pit cells 2","Pit cells 3","Intestinal stem cell","Enterocyte DD","Enterocyte proximal","TA/Colonocyte","BEST4+ epithelial","Colonocyte AQP8","Colonocyte FABP1","Colonocyte MUC5B","Goblet cell","Paneth","Enteroendocrine","Tuft"))
+
+scData.combined = SetIdent(scData.combined, value="cluster_label" )
 ```
 
 
-```{r, fig.width=14, fig.height=8}
-scData.combined = SetIdent(scData.combined, value="cluster_label" )
+```{r, fig.width=8, fig.height=6}
 DimPlot(scData.combined, reduction = "umap", label = TRUE)
+
+pdf(file.path(result_folder, "UMAP_IM_plus_GCA.pdf"), width=8, height = 6)
+DimPlot(scData.combined, reduction = "umap", label = TRUE, raster = T, pt.size = 2, raster.dpi = c(1024,1024)) + NoLegend()
+dev.off()
+
+png(file.path(result_folder, "UMAP_IM_plus_GCA.png"), width=800, height = 600)
+DimPlot(scData.combined, reduction = "umap", label = TRUE, raster = F, pt.size = 2) + NoLegend()
+dev.off()
 ```
 
 
 ```{r, fig.width=18, fig.height=6}
-scData.combined <- SetIdent(scData.combined, value="cluster_label")
 #DimPlot(scData.combined, reduction = "umap", split.by = "condition", label = T) + NoLegend()
 DimPlot(scData.combined, reduction = "umap", split.by = "condition")
+
+
+pdf(file.path(result_folder, "UMAP_IM_plus_GCA by condition.pdf"), width=18, height = 6)
+DimPlot(scData.combined, reduction = "umap", split.by = "condition",  label = FALSE, raster = T, pt.size = 3, raster.dpi = c(1024,1024)) 
+dev.off()
+
+png(file.path(result_folder, "UMAP_IM_plus_GCA by condition.png"), width=1800, height = 600)
+p <- DimPlot(scData.combined, reduction = "umap", split.by = "condition",  label = FALSE, raster = F, pt.size = 3) 
+print(p)
+dev.off()
+
 ```
 
 ```{r}
@@ -138,7 +161,7 @@ rownames(mm) = rownames(m)
 
 mm_r = sweep(mm, 2, apply(mm,2,sum), "/")
 
-pheatmap(mm_r, cluster_cols = F, cluster_rows=F, main="Proportion by cell type in each region")
+pheatmap(mm_r, cluster_cols = F, cluster_rows=F, main="Proportion of regional presence for each celltype")
 ```
 
 ```{r, fig.width=6,fig.height=4}
@@ -148,7 +171,8 @@ rownames(mm) = rownames(m)
 
 mm_r = sweep(mm, 1, apply(mm,1,sum), "/")
 
-pheatmap(mm_r, cluster_cols = F, cluster_rows=F, main="Proportion by region for each cell type")
+pheatmap(mm_r, cluster_cols = F, cluster_rows=F, main="Regional cell type proportions")
+pheatmap(mm_r, cluster_cols = F, cluster_rows=F, main="Regional cell type proportions", filename = file.path(result_folder, "Heatmap_cell_proporitions_by_region.pdf"), width = 6, height = 4)
 ```
 
 
@@ -300,7 +324,7 @@ DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA") + t
 
 ```{r, fig.width=14, fig.height=6}
 
-sel_markers=c("VIL1","TFF3","SPINK4","MUC2" )
+sel_markers=c("VIL1","TFF3","SPINK4","MUC2","KRT20","LEFTY1", "SOX4","LGR5","AXIN2","ASCL2","AQP4","SLC9A3","ANXA8","CA4","BEST2","SPINK1","FABP1","FABP2","SMOC2","CCL25","SULT1A1","MUC5B")
 
 #plot_genes(scData.combined, sel_markers)
 DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA") + theme(axis.text.x=element_text(angle=45, hjust=1))
@@ -323,7 +347,7 @@ DotPlot(scData.combined, features = sel_markers, cols="RdYlGn")
 
 
 
-## Defence markers
+## Defense markers
 
 ```{r, fig.width=14, fig.height=10}
 sel_markers=c("OLFM4", "ITLN1","REG3G", "DMBT1", "CD74", "SPDEF")
@@ -348,15 +372,45 @@ DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA") + t
 ## Scores and RNA count per cluster
 
 ```{r, fig.width=10, fig.height=6}
-VlnPlot(scData.combined, features = "percent_mito", ncol = 1, pt.size = 0.01)
+VlnPlot(scData.combined, features = "percent_mito", ncol = 1, pt.size = 0.0)
 #VlnPlot(scData.combined, features = "apoptosis_score", ncol = 1, pt.size = 0.01)
-VlnPlot(scData.combined, features = "nCount_RNA", ncol = 1, pt.size = 0.01)
-VlnPlot(scData.combined, features = "nFeature_RNA", ncol = 1, pt.size = 0.01)
+VlnPlot(scData.combined, features = "nCount_RNA", ncol = 1, pt.size = 0.0) + scale_y_log10()
+VlnPlot(scData.combined, features = "nFeature_RNA", ncol = 1, pt.size = 0.0)
 ```
 
-```{r}
+```{r, fig.width=8, fig.height=5}
 FeaturePlot(object = scData.combined,  features = "nFeature_RNA", reduction="umap", label=T)
 ```
+
+# Best markers
+
+```{r, fig.width=13, fig.height=5}
+cluster_order <- c("Sto gland base","Pit cells 1","Pit cells 2","Pit cells 3","Intestinal stem cell","Enterocyte DD","Enterocyte proximal","TA/Colonocyte","Colonocyte FABP1","Colonocyte MUC5B","Colonocyte AQP8","BEST4+ epithelial","Goblet cell","Paneth","Enteroendocrine","Tuft")
+
+scData.combined$cluster_label <- factor(scData.combined$cluster_label, levels=cluster_order)
+sel_markers = c("MUC6","PGC","MUC5AC","TFF1","TFF2",
+                "OLFM4","REG1A","CDX2","CDX1","ISX",
+                "RBP2","ALDOB",
+                "ANPEP","SI","APOA1",
+                "LEFTY1","MKI67",
+                "FABP1","MUC5B",
+                "CA4","KRT20","AQP8","BEST4",
+                "MUC2","SPINK4","ATOH1",
+                "DEFA5","DEFA6",
+                "CHGA","SST","GAST",
+                "SH2D6","LRMP")
+
+p <- DotPlot(scData.combined, features = sel_markers, cols="RdYlBu",group.by="cluster_label",scale=T, assay = "RNA") + theme(axis.text.x = element_text(angle=45, hjust=1))
+print(p)
+
+pdf(file.path(result_folder, "Best_epithelial_markers_scRNA.pdf"), width=13, height=5)
+print(p)
+dev.off()
+```
+```{r, fig.width=8, fig.height=6}
+dotplot_scRNA_multi_feature(scData.combined, c("CDX2","REG4"), scale=T, cluster="cluster_label", group="condition", max_val_scale = 2) + labs(x="",y="")
+```
+
 
 # Software versions
 

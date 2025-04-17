@@ -1,0 +1,141 @@
+---
+title: "Stomach Methylation - IM/non-IM vs. corresponding healthy samples, 450k + EPIC, classification in PMD solo-WCGW sites"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(pheatmap)
+library(limma)
+library(data.table)
+library(readxl)
+library(ggplot2)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+source("../../../Utils/pheatmap.type.R")
+
+```
+
+
+# Overview
+
+We here use data from Endicott et al., Nature Communications 2022, Cell division drives DNA methylation loss in late-replicating domains in primary human cells.
+We use input files for "EPIC probes for Solo-WCGW CpGs in common PMDs" and "EPIC probes for Solo-WCGW CpGs in common HMDs".
+
+```{r}
+pmd <- fread("../../../../Data/ExtData/soloWCGW/EPIC.comPMD.probes.tsv.gz")$V4
+hmd <- fread("../../../../Data/ExtData/soloWCGW/EPIC.comHMD.probes.tsv.gz")$V4
+```
+
+
+# IM DM results
+
+See DGE_Result_Overview.html for definitions of hyper/hypomethylated CpG cutoff values.
+
+
+```{r}
+load(file.path(data_storage_folder, "Methylation_DM_lists.Rdata"))
+```
+
+## Hyper-CpGs
+
+```{r}
+sapply(all_hyper_cpg, nrow)
+```
+
+## Hypo-CpGs
+
+```{r}
+sapply(all_hypo_cpg, nrow)
+```
+
+# IM vs. Non-IM, only new (EPIC) samples 
+
+```{r}
+comp = "IM_vs_nonIM"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+dm_im$pmd_class = ifelse(dm_im$Row.names %in% pmd, "PMD", ifelse(dm_im$Row.names %in% hmd, "HMD","other"))
+im_vs_healthy_results <- dm_im
+```
+
+```{r}
+table(im_vs_healthy_results$pmd_class)
+m <- table(im_vs_healthy_results$dge_class, im_vs_healthy_results$pmd_class, dnn=c("DGE class","PMD class"))
+m
+m |> prop.table(margin=1) |> round(digits = 3)
+```
+# IM  vs. healthy, only EPIC samples
+
+```{r}
+comp = "IM_vs_nonIM_with_healthy"
+```
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+dm_im$pmd_class = ifelse(dm_im$Row.names %in% pmd, "PMD", ifelse(dm_im$Row.names %in% hmd, "HMD","other"))
+im_vs_healthy_results <- dm_im
+```
+
+```{r}
+table(im_vs_healthy_results$pmd_class)
+m <- table(im_vs_healthy_results$dge_class, im_vs_healthy_results$pmd_class, dnn=c("DGE class","PMD class"))
+m
+m |> prop.table(margin=1) |> round(digits = 3)
+```
+
+# IM and non-IM vs. healthy, 450k + EPIC samples 
+
+
+```{r}
+comp = "IM_vs_nonIM_with_healthy_450k_and_EPIC"
+```
+
+
+```{r}
+dm_im <- rbind(all_hyper_cpg[[comp]], all_hypo_cpg[[comp]])
+dm_im$direction_im <- ifelse(dm_im$logFC > 0, "hyper","hypo")
+dm_im$dge_class <- with(dm_im, ifelse(logFC > 0, ifelse(logFC > 0.2, "hyper", "hyper_weak"), ifelse(logFC< -0.2, "hypo", "hypo_weak")))
+
+dm_im$pmd_class = ifelse(dm_im$Row.names %in% pmd, "PMD", ifelse(dm_im$Row.names %in% hmd, "HMD","other"))
+im_vs_healthy_results <- dm_im
+```
+
+```{r}
+table(im_vs_healthy_results$pmd_class)
+m <- table(im_vs_healthy_results$dge_class, im_vs_healthy_results$pmd_class, dnn=c("DGE class","PMD class"))
+m
+m |> prop.table(margin=1) |> round(digits = 3)
+```
+
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```

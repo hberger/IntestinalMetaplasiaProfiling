@@ -1,0 +1,955 @@
+---
+title: "Stomach Methylation - Differential Methylation Analysis"
+author: "Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Differential_Methylation_CpG_level/")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+setwd("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Differential_Methylation_CpG_level/")
+
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+library(plyr)
+
+
+```
+
+
+# Experimental Design
+
+Gastric epithelial cells of antrum, corpus and fundus were isolated from sleeve resection tissue and cultivated as organoids. After one to two passages, Air-Liquid-Interface (ALI) culture was started and when cells had developed a completly polarized and sealed monolayer, differentiation was induced by removing Wnt and R-spoding from the cell culture medium for seven days. The so obtained samples are:  
+- Antrum undifferentiated (AU)  
+- Antrum differentiated (AD)  
+- Corpus undifferentiated (CU)  
+- Corpus differentiated (CD)  
+- Fundus undifferentiated (FU)  
+- Fundus differentiated (FD)  
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+To analyse the generated data in R, I will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013] and use limma for differential methylation analysis
+
+# Data Import
+
+Raw intensity values were preprocessed and QC checked (see "Preprocessing_and_QC.Rmd"). Here I load the sample annotation and the normalized (SWAN) and batch corrected (for slide) beta values:
+
+```{r Data Import, message=FALSE}
+
+load("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/myLoad.RData")
+
+load("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/myNorm_batch_corrected.RData")
+
+```
+
+# Differential Methylation Analysis
+
+The following comparisons are going to be performed using limma [Ritchie ME, *et al*., 2015]:
+
+- AU vs CU  
+- AD vs CD
+- AU vs FU
+- AD vs FD
+- CU vs FU and FU vs CU
+- CD vs FD and FD vs CD
+
+- AD vs AU
+- CD vs CU
+- FD vs FU
+
+- A vs C
+- A vs F
+- C vs F
+
+```{r Differential Methylation Analysis, echo = TRUE, warning=FALSE, message=FALSE}
+
+if(FALSE) {
+  
+  all_results_betas = list()
+  
+  data_matrix = myNorm_batch_corrected
+  ed = myLoad$pd
+  
+  
+  # AU vs CU
+  sel_conditions = c("AU","CU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AU vs. CU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # AD vs CD
+  sel_conditions = c("AD","CD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. CD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # AU vs FU
+  sel_conditions = c("AU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AU vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # AD vs FD
+  sel_conditions = c("AD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. FD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # CU vs FU
+  sel_conditions = c("CU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CU vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # CD vs FD
+  sel_conditions = c("CD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CD vs. FD"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  
+  
+    # FU vs CU
+  sel_conditions = c("CU","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FU vs. CU"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata))
+  
+  # FD vs CD
+  sel_conditions = c("CD","FD")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.treatment))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FD vs. CD"]] = topTable(fit, coef="groups2", adjust="BH", number=nrow(edata)) 
+  
+  # AD vs AU
+  sel_conditions = c("AD","AU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["AD vs. AU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  # CD vs CU
+  sel_conditions = c("CD","CU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["CD vs. CU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+  
+  # FD vs FU
+  sel_conditions = c("FD","FU")
+  sel_samples = rownames(subset(ed, Sample_Group %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Sample_Group)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["FD vs. FU"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+
+  
+  # Antrum vs Corpus
+  sel_conditions = c("Antrum","Corpus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Antrum vs. Corpus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+  # Antrum vs Fundus
+  sel_conditions = c("Antrum","Fundus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Antrum vs. Fundus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))
+  
+
+  # Corpus vs Fundus
+  sel_conditions = c("Corpus","Fundus")
+  sel_samples = rownames(subset(ed, Site %in% sel_conditions))
+  edata = data_matrix[,sel_samples]
+  groups = factor(ed[sel_samples,]$Site)
+  patient = factor(ed[sel_samples,]$Patient)
+  
+  design = model.matrix(~ patient + groups ,  contrasts.arg=list(groups=contr.SAS))
+  
+  fit <- lmFit(edata,design)
+  fit <- eBayes(fit)
+  all_results_betas[["Corpus vs. Fundus"]] = topTable(fit, coef="groups1", adjust="BH", number=nrow(edata))  
+  
+ 
+  
+  
+  save(all_results_betas, file="all_results_betas.RData")
+} else {
+  load("all_results_betas.RData")
+}
+
+```
+
+
+For each comparison, a tab seperated .txt file is written and store in the results folder.
+
+
+```{r output}
+
+result_folder = paste("./Results",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data("probe.features.epic")
+
+# Output:
+output_file_prefix = paste(result_folder,"DM_results_", sep="/")
+for (cc in names(all_results_betas)) {
+
+    tmp_results = merge(all_results_betas[[cc]], probe.features, by = 0, all.x=T, sort=F)
+
+  write.table(tmp_results, file=paste(output_file_prefix, cc, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+```
+
+Futhermore, a subsetted version (delta beta > 0.2 or < -0.2 and p < 0.05) is written and stored in the results folder.  For the differntiation-specific comparisons, a subsetted version (delta beta > 0.05 or < -0.05 and p < 0.001) is written as well.
+
+```{r output sub}
+
+
+sub_fun <- function(x) {
+  x[(x$logFC  > 0.2 | x$logFC < -0.2) & x$P.Value < 0.05,]
+}
+
+all_results_betas_sub <- lapply(all_results_betas, sub_fun)
+
+save(all_results_betas_sub, file = "all_results_betas_sub.RData")
+
+# Output:
+output_file_prefix = paste(result_folder,"DM_results_sub_", sep="/")
+for (cc in names(all_results_betas_sub)) {
+
+    tmp_results = merge(all_results_betas_sub[[cc]], probe.features, by = 0, all.x=T, sort=F)
+
+  write.table(tmp_results, file=paste(output_file_prefix, cc, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+
+## Diff-specific
+sub_fun <- function(x) {
+  x[(x$logFC  > 0.05 | x$logFC < -0.05) & x$P.Value < 0.001,]
+}
+
+DiffSpec = c("AD vs. AU", "CD vs. CU", "FD vs. FU")
+
+all_results_betas_DiffSpec <- lapply(all_results_betas, sub_fun)
+
+# Output:
+output_file_prefix = paste(result_folder,"DM_results_sub_sub", sep="/")
+for (cc in DiffSpec) {
+
+    tmp_results = merge(all_results_betas_DiffSpec[[cc]], probe.features, by = 0, all.x=T, sort=F)
+
+  write.table(tmp_results, file=paste(output_file_prefix, cc, ".txt", sep="" ), row.names=F , sep="\t", dec=".")
+}
+```
+
+# List of DM CpGs in all comparisons for Appendix
+
+A list with all CpGs with delta beta > 20% and p < 0.05 is written in the result folder.
+
+```{r}
+
+if(FALSE){
+  funfun = function(x){
+  merge(x, probe.features, by=0, sort =F)
+  }
+
+
+  all_results_betas_anno = lapply(all_results_betas, funfun)
+  
+  save(all_results_betas_anno, file = "all_results_betas_anno.RData")
+   
+  all_results_betas_anno_sub = lapply(all_results_betas_anno, sub_fun)
+  
+  save(all_results_betas_anno_sub, file = "all_results_betas_anno_sub.RData")
+
+}else{
+  load("all_results_betas_anno_sub.RData")
+  load("all_results_betas_anno.RData")
+  }  
+  
+# subset(all_results_betas_anno_sub) for the wanted comparisons
+
+all_results_betas_anno_sub$`FU vs. CU` = NULL
+all_results_betas_anno_sub$`FD vs. CD` = NULL
+
+
+All_sign_Cgs = list()
+
+for(dd in names(all_results_betas_anno_sub[c(1:6, 10:12)])){
+  All_sign_Cgs[[dd]] = all_results_betas_anno_sub[[dd]]$Row.names
+}
+
+All_sign_Cgs = unlist(rbind(All_sign_Cgs))
+All_sign_Cgs = unique(All_sign_Cgs)
+
+
+
+new_fun = function(x){
+  rownames(x) <- x$Row.names
+  return(x)
+}
+
+
+all_results_betas_anno_sub = lapply(all_results_betas_anno_sub, new_fun)
+
+All_sign_Cgs = as.data.frame(All_sign_Cgs)
+
+All_sign_Cgs2 = All_sign_Cgs
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs, all_results_betas_anno_sub$`AU vs. CU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`AD vs. CD`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`AU vs. FU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`AD vs. FD`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`CU vs. FU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val", "CU vs FU logFC", "CU vs FU P.Values", "CU vs FU adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`CD vs. FD`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val", "CU vs FU logFC", "CU vs FU P.Values", "CU vs FU adj.P.Val", "CD vs FD logFC", "CD vs FD P.Values", "CD vs FD adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`Antrum vs. Corpus`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val", "CU vs FU logFC", "CU vs FU P.Values", "CU vs FU adj.P.Val", "CD vs FD logFC", "CD vs FD P.Values", "CD vs FD adj.P.Val", "A vs C logFC", "A vs C P.Values", "A vs C adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`Antrum vs. Fundus`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val", "CU vs FU logFC", "CU vs FU P.Values", "CU vs FU adj.P.Val", "CD vs FD logFC", "CD vs FD P.Values", "CD vs FD adj.P.Val", "A vs C logFC", "A vs C P.Values", "A vs C adj.P.Val", "A vs F logFC", "A vs F P.Values", "A vs F adj.P.Val")
+
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`Corpus vs. Fundus`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "AU vs FU logFC", "AU vs FU P.Values", "AU vs FU adj.P.Val", "AD vs FD logFC", "AD vs FD P.Values", "AD vs FD adj.P.Val", "CU vs FU logFC", "CU vs FU P.Values", "CU vs FU adj.P.Val", "CD vs FD logFC", "CD vs FD P.Values", "CD vs FD adj.P.Val", "A vs C logFC", "A vs C P.Values", "A vs C adj.P.Val", "A vs F logFC", "A vs F P.Values", "A vs F adj.P.Val", "C vs F logFC", "C vs F P.Values", "C vs F adj.P.Val")
+
+
+
+
+save(All_sign_Cgs2, file = "Appendix_Sign_Cgs.RData") 
+load("Appendix_Sign_Cgs.RData")
+
+All_sign_Cgs2[,2:28] = round(All_sign_Cgs2[,2:28], digits = 3)
+
+probe.features$Row.names = rownames(probe.features)
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, probe.features[,c("Row.names", "gene")], by.x = "All_sign_Cgs", by.y = "Row.names")
+
+
+
+output_file_prefix = paste(result_folder,"", sep="/")
+write.table(All_sign_Cgs2, file = paste(output_file_prefix, "Appendix_Sign_Cgs.txt", sep="" ), row.names=F , sep="\t", dec=".")
+
+
+# Diff.spec
+
+All_sign_Cgs = list()
+
+for(dd in names(all_results_betas_anno_sub[7:9])){
+  All_sign_Cgs[[dd]] = all_results_betas_anno_sub[[dd]]$Row.names
+}
+
+All_sign_Cgs = unlist(rbind(All_sign_Cgs))
+All_sign_Cgs = unique(All_sign_Cgs)
+
+
+
+new_fun = function(x){
+  rownames(x) <- x$Row.names
+  return(x)
+}
+
+
+all_results_betas_anno_sub = lapply(all_results_betas_anno_sub, new_fun)
+
+All_sign_Cgs = as.data.frame(All_sign_Cgs)
+
+All_sign_Cgs2 = All_sign_Cgs
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs, all_results_betas_anno_sub$`AD vs. AU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AD vs AU logFC", "AD vs AU P.Values", "AD vs AU adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`CD vs. CU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "CD vs CU logFC", "CD vs CU P.Values", "CD vs CU adj.P.Val")
+
+All_sign_Cgs2 = merge.data.frame(All_sign_Cgs2, all_results_betas_anno_sub$`FD vs. FU`[,c("Row.names", "logFC", "P.Value", "adj.P.Val")], by.x = "All_sign_Cgs", by.y = "Row.names", sort=FALSE, all.x = T, all.y = T)
+colnames(All_sign_Cgs2) = c("All_sign_Cgs", "AU vs CU logFC", "AU vs CU P.Values", "AU vs CU adj.P.Val", "AD vs CD logFC", "AD vs CD P.Values", "AD vs CD adj.P.Val", "FD vs FU logFC", "FD vs FU P.Values", "FD vs FU adj.P.Val")
+
+All_sign_Cgs2_Diff_spec = All_sign_Cgs2
+
+save(All_sign_Cgs2_Diff_spec, file = "Appendix_Sign_Cgs_Diff_spec.RData") 
+load("Appendix_Sign_Cgs_Diff_spec.RData")
+
+All_sign_Cgs2_Diff_spec[,2:10] = round(All_sign_Cgs2_Diff_spec[,2:10], digits = 3)
+
+probe.features$Row.names = rownames(probe.features)
+All_sign_Cgs2_Diff_spec = merge.data.frame(All_sign_Cgs2_Diff_spec, probe.features[,c("Row.names", "gene")], by.x = "All_sign_Cgs", by.y = "Row.names")
+
+output_file_prefix = paste(result_folder,"", sep="/")
+write.table(All_sign_Cgs2, file = paste(output_file_prefix, "Appendix_Sign_Cgs_Diff_spec.txt", sep="" ), row.names=F , sep="\t", dec=".")
+
+```
+
+# Distribution of DM CpGs between all undifferentiated comparisons on genes and IGRs
+
+```{r}
+
+
+funfun = function(x){
+  subset(x, x$P.Value < 0.001 & (x$logFC > 0.2 | x$logFC < -0.2))
+}
+
+all_DMPs = lapply(all_results_betas_anno, funfun)
+
+all_DMPs = unique(c(all_DMPs$`AU vs. CU`$Row.names, all_DMPs$`CU vs. FU`$Row.names, all_DMPs$`AU vs. FU`$Row.names))
+
+
+myNorm_anno = merge.data.frame(myNorm_batch_corrected, probe.features, by=0, sort = F, all.x = T)
+
+myNorm_anno_sorted = myNorm_anno[order(myNorm_anno$CHR, myNorm_anno$MAPINFO),]
+rownames(myNorm_anno_sorted) = myNorm_anno_sorted$Row.names
+myNorm_anno_sorted$Row.names = NULL
+
+all_DMPs = myNorm_anno_sorted[all_DMPs,]
+
+xx = table(all_DMPs$feature)
+
+barplot(xx[c(7,8,3,1,5,4,2,6)], cex.names = 0.8, names.arg = names(xx[c(7,8,3,1,5,4,2,6)]), main = "Distribution of DM CpGs in the stomach", ylim = c(0,1000), ylab = "Number of CpGs", xlab = "genomic regions")
+
+xx = table(all_DMPs$feature == "IGR")
+
+barplot(xx, names.arg = c("gene", "IGR"), ylim = c(0,1400), ylab = "Number of CpGs", xlab = "genomic regions")
+
+```
+
+```{r}
+
+xx = subset(all_DMPs, all_DMPs$feature != "IGR" & all_DMPs$feature != "ExonBnd" & all_DMPs$feature != "3'UTR")
+
+xx = table(xx$feature == "Body")
+
+barplot(xx, names.arg = c("promoter region", "gene body"), ylim = c(0,1000), ylab = "Number of CpGs", xlab = "genomic regions")
+
+
+
+```
+
+## Counts of |delta beta| > 0.2 and p < 0.05
+
+```{r}
+
+numbers = list()
+
+numbers[["AU vs CU"]] = length(all_results_betas_sub$`AU vs. CU`$logFC)
+numbers[["AD vs CD"]] = length(all_results_betas_sub$`AD vs. CD`$logFC)
+numbers[["AU vs FU"]] = length(all_results_betas_sub$`AU vs. FU`$logFC)
+numbers[["AD vs FD"]] = length(all_results_betas_sub$`AD vs. FD`$logFC)
+numbers[["CU vs FU"]] = length(all_results_betas_sub$`CU vs. FU`$logFC)
+numbers[["CD vs FD"]] = length(all_results_betas_sub$`CD vs. FD`$logFC)
+numbers[["AD vs AU"]] = length(all_results_betas_sub$`AD vs. AU`$logFC)
+numbers[["CD vs CU"]] = length(all_results_betas_sub$`CD vs. CU`$logFC)
+numbers[["FD vs FU"]] = length(all_results_betas_sub$`FD vs. FU`$logFC)
+
+
+
+numbers2 = as.matrix(do.call(cbind, numbers))
+barplot(numbers2, las=2, ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+1000)))
+```
+
+```{r}
+
+numbers = list()
+
+numbers[["AU vs CU"]] = length(all_results_betas_sub$`AU vs. CU`$logFC)
+numbers[["AD vs CD"]] = length(all_results_betas_sub$`AD vs. CD`$logFC)
+numbers[["AU vs FU"]] = length(all_results_betas_sub$`AU vs. FU`$logFC)
+numbers[["AD vs FD"]] = length(all_results_betas_sub$`AD vs. FD`$logFC)
+numbers[["CU vs FU"]] = length(all_results_betas_sub$`CU vs. FU`$logFC)
+numbers[["CD vs FD"]] = length(all_results_betas_sub$`CD vs. FD`$logFC)
+
+
+numbers2 = as.matrix(do.call(cbind, numbers))
+barplot(numbers2, las=2, ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+1000)))
+```
+
+```{r}
+
+numbers = list()
+
+numbers[["AD vs AU"]] = length(all_results_betas_sub$`AD vs. AU`$logFC)
+numbers[["CD vs CU"]] = length(all_results_betas_sub$`CD vs. CU`$logFC)
+numbers[["FD vs FU"]] = length(all_results_betas_sub$`FD vs. FU`$logFC)
+
+
+
+numbers2 = as.matrix(do.call(cbind, numbers))
+barplot(numbers2, las=2, ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+20)))
+```
+
+## Counts of hyper- and hypomethylated Cgs (p < 0.05)
+
+```{r }
+
+numbers = list()
+
+numbers[["AU vs CU \n hyper"]] = nrow(subset(all_results_betas_sub$`AU vs. CU`, all_results_betas_sub$`AU vs. CU`$logFC > 0.2 & all_results_betas_sub$`AU vs. CU`$P.Value < 0.05))
+numbers[["AU vs CU \n hypo"]] = nrow(subset(all_results_betas_sub$`AU vs. CU`, all_results_betas_sub$`AU vs. CU`$logFC < -0.2 & all_results_betas_sub$`AU vs. CU`$P.Value < 0.05))
+numbers[["AD vs CD \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. CD`, all_results_betas_sub$`AD vs. CD`$logFC > 0.2 & all_results_betas_sub$`AD vs. CD`$P.Value < 0.05))
+numbers[["AD vs CD \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. CD`, all_results_betas_sub$`AD vs. CD`$logFC < -0.2 & all_results_betas_sub$`AD vs. CD`$P.Value < 0.05))
+numbers[["AU vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`AU vs. FU`, all_results_betas_sub$`AU vs. FU`$logFC > 0.2 & all_results_betas_sub$`AU vs. FU`$P.Value < 0.05))
+numbers[["AU vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`AU vs. FU`, all_results_betas_sub$`AU vs. FU`$logFC < -0.2 & all_results_betas_sub$`AU vs. FU`$P.Value < 0.05))
+numbers[["AD vs FD \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. FD`, all_results_betas_sub$`AD vs. FD`$logFC > 0.2 & all_results_betas_sub$`AD vs. FD`$P.Value < 0.05))
+numbers[["AD vs FD \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. FD`, all_results_betas_sub$`AD vs. FD`$logFC < -0.2 & all_results_betas_sub$`AD vs. FD`$P.Value < 0.05))
+numbers[["CU vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`CU vs. FU`, all_results_betas_sub$`CU vs. FU`$logFC > 0.2 & all_results_betas_sub$`CU vs. FU`$P.Value < 0.05))
+numbers[["CU vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`CU vs. FU`, all_results_betas_sub$`CU vs. FU`$logFC < -0.2 & all_results_betas_sub$`CU vs. FU`$P.Value < 0.05))
+numbers[["CD vs FD \n hyper"]] = nrow(subset(all_results_betas_sub$`CD vs. FD`, all_results_betas_sub$`CD vs. FD`$logFC > 0.2 & all_results_betas_sub$`CD vs. FD`$P.Value < 0.05))
+numbers[["CD vs FD \n hypo"]] = nrow(subset(all_results_betas_sub$`CD vs. FD`, all_results_betas_sub$`CD vs. FD`$logFC < -0.2 & all_results_betas_sub$`CD vs. FD`$P.Value < 0.05))
+numbers[["AD vs AU \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. AU`, all_results_betas_sub$`AD vs. AU`$logFC > 0.2 & all_results_betas_sub$`AD vs. AU`$P.Value < 0.05))
+numbers[["AD vs AU \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. AU`, all_results_betas_sub$`AD vs. AU`$logFC < -0.2 & all_results_betas_sub$`AD vs. AU`$P.Value < 0.05))
+numbers[["CD vs CU \n hyper"]] = nrow(subset(all_results_betas_sub$`CD vs. CU`, all_results_betas_sub$`CD vs. CU`$logFC > 0.2 & all_results_betas_sub$`CD vs. CU`$P.Value < 0.05))
+numbers[["CD vs CU \n hypo"]] = nrow(subset(all_results_betas_sub$`CD vs. CU`, all_results_betas_sub$`CD vs. CU`$logFC < -0.2 & all_results_betas_sub$`CD vs. CU`$P.Value < 0.05))
+numbers[["FD vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`FD vs. FU`, all_results_betas_sub$`FD vs. FU`$logFC > 0.2 & all_results_betas_sub$`FD vs. FU`$P.Value < 0.05))
+numbers[["FD vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`FD vs. FU`, all_results_betas_sub$`FD vs. FU`$logFC < -0.2 & all_results_betas_sub$`FD vs. FU`$P.Value < 0.05))
+
+
+par(mar = c(5, 4, 4, 3) + 1, xpd=T)
+#par(mgp = c(3,1.8,0))
+numbers2 = as.vector(do.call(cbind, numbers))
+barplot(numbers2, las=2, cex.names=0.8, col = c("red", "darkblue"), legend.text = c("Hyper", "Hypo"), ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+500)), 
+        names.arg = c(rep("AU vs CU", 2), 
+                      rep("AD vs CD", 2), 
+                      rep("AU vs FU", 2), 
+                      rep("AD vs FD", 2), 
+                      rep("CU vs FU", 2),
+                      rep("CD vs FD", 2), 
+                      rep("AD vs AU", 2),
+                      rep("CD vs CU", 2), 
+                      rep("FD vs FU", 2)))
+
+
+
+```
+
+```{r }
+
+numbers = list()
+
+numbers[["AU vs CU \n hyper"]] = nrow(subset(all_results_betas_sub$`AU vs. CU`, all_results_betas_sub$`AU vs. CU`$logFC > 0.2 & all_results_betas_sub$`AU vs. CU`$P.Value < 0.05))
+numbers[["AU vs CU \n hypo"]] = nrow(subset(all_results_betas_sub$`AU vs. CU`, all_results_betas_sub$`AU vs. CU`$logFC < -0.2 & all_results_betas_sub$`AU vs. CU`$P.Value < 0.05))
+numbers[["AD vs CD \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. CD`, all_results_betas_sub$`AD vs. CD`$logFC > 0.2 & all_results_betas_sub$`AD vs. CD`$P.Value < 0.05))
+numbers[["AD vs CD \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. CD`, all_results_betas_sub$`AD vs. CD`$logFC < -0.2 & all_results_betas_sub$`AD vs. CD`$P.Value < 0.05))
+numbers[["AU vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`AU vs. FU`, all_results_betas_sub$`AU vs. FU`$logFC > 0.2 & all_results_betas_sub$`AU vs. FU`$P.Value < 0.05))
+numbers[["AU vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`AU vs. FU`, all_results_betas_sub$`AU vs. FU`$logFC < -0.2 & all_results_betas_sub$`AU vs. FU`$P.Value < 0.05))
+numbers[["AD vs FD \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. FD`, all_results_betas_sub$`AD vs. FD`$logFC > 0.2 & all_results_betas_sub$`AD vs. FD`$P.Value < 0.05))
+numbers[["AD vs FD \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. FD`, all_results_betas_sub$`AD vs. FD`$logFC < -0.2 & all_results_betas_sub$`AD vs. FD`$P.Value < 0.05))
+numbers[["CU vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`CU vs. FU`, all_results_betas_sub$`CU vs. FU`$logFC > 0.2 & all_results_betas_sub$`CU vs. FU`$P.Value < 0.05))
+numbers[["CU vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`CU vs. FU`, all_results_betas_sub$`CU vs. FU`$logFC < -0.2 & all_results_betas_sub$`CU vs. FU`$P.Value < 0.05))
+numbers[["CD vs FD \n hyper"]] = nrow(subset(all_results_betas_sub$`CD vs. FD`, all_results_betas_sub$`CD vs. FD`$logFC > 0.2 & all_results_betas_sub$`CD vs. FD`$P.Value < 0.05))
+numbers[["CD vs FD \n hypo"]] = nrow(subset(all_results_betas_sub$`CD vs. FD`, all_results_betas_sub$`CD vs. FD`$logFC < -0.2 & all_results_betas_sub$`CD vs. FD`$P.Value < 0.05))
+
+
+
+par(mar = c(5, 4, 4, 3) + 1, xpd=T)
+#par(mgp = c(3,1.8,0))
+numbers2 = as.vector(do.call(cbind, numbers))
+barplot(numbers2, las=2, cex.names=0.8, col = c("red", "darkblue"), legend.text = c("Hyper", "Hypo"), ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+500)), 
+        names.arg = c(rep("AU vs CU", 2), 
+                      rep("AD vs CD", 2), 
+                      rep("AU vs FU", 2), 
+                      rep("AD vs FD", 2), 
+                      rep("CU vs FU", 2),
+                      rep("CD vs FD", 2) 
+                      ))
+
+
+
+```
+
+```{r }
+
+numbers = list()
+
+numbers[["AD vs AU \n hyper"]] = nrow(subset(all_results_betas_sub$`AD vs. AU`, all_results_betas_sub$`AD vs. AU`$logFC > 0.2 & all_results_betas_sub$`AD vs. AU`$P.Value < 0.05))
+numbers[["AD vs AU \n hypo"]] = nrow(subset(all_results_betas_sub$`AD vs. AU`, all_results_betas_sub$`AD vs. AU`$logFC < -0.2 & all_results_betas_sub$`AD vs. AU`$P.Value < 0.05))
+numbers[["CD vs CU \n hyper"]] = nrow(subset(all_results_betas_sub$`CD vs. CU`, all_results_betas_sub$`CD vs. CU`$logFC > 0.2 & all_results_betas_sub$`CD vs. CU`$P.Value < 0.05))
+numbers[["CD vs CU \n hypo"]] = nrow(subset(all_results_betas_sub$`CD vs. CU`, all_results_betas_sub$`CD vs. CU`$logFC < -0.2 & all_results_betas_sub$`CD vs. CU`$P.Value < 0.05))
+numbers[["FD vs FU \n hyper"]] = nrow(subset(all_results_betas_sub$`FD vs. FU`, all_results_betas_sub$`FD vs. FU`$logFC > 0.2 & all_results_betas_sub$`FD vs. FU`$P.Value < 0.05))
+numbers[["FD vs FU \n hypo"]] = nrow(subset(all_results_betas_sub$`FD vs. FU`, all_results_betas_sub$`FD vs. FU`$logFC < -0.2 & all_results_betas_sub$`FD vs. FU`$P.Value < 0.05))
+
+
+par(mar = c(5, 4, 4, 3) + 1, xpd=T)
+#par(mgp = c(3,1.8,0))
+numbers2 = as.vector(do.call(cbind, numbers))
+barplot(numbers2, las=2, cex.names=0.8, col = c("red", "darkblue"), legend.text = c("Hyper", "Hypo"), ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+20)), 
+        names.arg = c(rep("AD vs AU", 2),
+                      rep("CD vs CU", 2), 
+                      rep("FD vs FU", 2)))
+
+```
+
+Here the comparisons of the undiff. vs the diff. tissue region (e.g. AU vs AD) shows only few changes above 20%. 
+
+Therefore, here I display the number of diff. meth. CpGs that are not filtered for |delta beta| > 0.2, but only for a p-value < 0.001 and |delta beta| > 0.5, in order to changes that might be cell type specific.
+
+## Counts of CpGs with a p-value < 0.001  and |delta beta| > 0.5
+
+```{r}
+
+numbers = list()
+
+numbers[["AD vs AU"]] = nrow(subset(all_results_betas$`AD vs. AU`, P.Value < 0.001 & (logFC > 0.05 | logFC < -0.05)))
+numbers[["CD vs CU"]] = nrow(subset(all_results_betas$`CD vs. CU`, P.Value < 0.001 & (logFC > 0.05 | logFC < -0.05)))
+numbers[["FD vs FU"]] = nrow(subset(all_results_betas$`FD vs. FU`, P.Value < 0.001 & (logFC > 0.05 | logFC < -0.05)))
+
+
+par(mar = c(5, 4, 4, 3) + 1, xpd=T)
+numbers2 = as.matrix(do.call(cbind, numbers))
+barplot(numbers2, las=2, ylab = "# of diff. meth CpGs", ylim= c(0, (max(numbers2)+200)), cex.axis = 0.8)
+```
+
+There are differences between the undifferentiated and differentiated samples in DNA methylation ranging from 5 to 20 % indicating that there might be cell type specific and therefore diluted significant changes that should be further investigated using the results excel files for these comparisons which are not filtered for |delta beta| > 0.2. 
+
+
+## Counts of hyper- and hypomethylated Cgs (> 5%) and p < 0.001
+
+```{r }
+
+numbers = list()
+
+numbers[["AD vs AU \n hyper"]] = nrow(subset(all_results_betas$`AD vs. AU`, logFC > 0.05 & P.Value < 0.001))
+numbers[["AD vs AU \n hypo"]] = nrow(subset(all_results_betas$`AD vs. AU`, logFC < -0.05 & P.Value < 0.001))
+numbers[["CD vs CU \n hyper"]] = nrow(subset(all_results_betas$`CD vs. CU`, logFC > 0.05 & P.Value < 0.001))
+numbers[["CD vs CU \n hypo"]] = nrow(subset(all_results_betas$`CD vs. CU`, logFC < -0.05 & P.Value < 0.001))
+numbers[["FD vs FU \n hyper"]] = nrow(subset(all_results_betas$`FD vs. FU`, logFC > 0.05 & P.Value < 0.001))
+numbers[["FD vs FU \n hypo"]] = nrow(subset(all_results_betas$`FD vs. FU`, logFC < -0.05 & P.Value < 0.001))
+
+
+numbers2 = as.vector(do.call(cbind, numbers))
+barplot(numbers2, las=2, cex.names=0.8, col = c("red", "darkblue"), legend.text = c("Hyper", "Hypo"), ylab = "# of diff. meth (> 5%) CpGs (p-val < 0.001)", ylim= c(0, (max(numbers2)+100)),names.arg = c( rep("AD vs AU", 2),rep("CD vs CU", 2), rep("FD vs FU", 2))) 
+
+
+```
+
+In the antrum, there is more hypo- then hypermethylation, whereas in the corpus it is the opposite. Fundus samples instead show almost equal amount of hyper- and hypomethylated CpGs upon differentiation. The process of differentiation seems to be the same for all tissue regions, as concluded from the gene expression data. Therefor, the unqual distribution of hyper- and hypomethylated CpGs with a lower threshold of delta beta > 5 % might be random and not related to differentiation.   
+
+
+## Counts of |delta beta| > 0.2 and p < 0.05 for the groups
+
+```{r }
+
+numbers = list()
+
+numbers[["A vs C"]] = length(all_results_betas_sub$`Antrum vs. Corpus`$logFC)
+numbers[["A vs F"]] = length(all_results_betas_sub$`Antrum vs. Fundus`$logFC)
+numbers[["C vs F"]] = length(all_results_betas_sub$`Corpus vs. Fundus`$logFC)
+
+numbers2 = as.matrix(do.call(cbind, numbers))
+barplot(numbers2, las=1, ylab = "# of diff. meth. CpGs", ylim= c(0, (max(numbers2)+1000)))
+```
+
+## Counts of hyper- and hypomethylated Cgs (p < 0.05) for the groups
+
+```{r }
+
+numbers = list()
+
+numbers[["A vs C \n hyper"]] = nrow(subset(all_results_betas_sub$`Antrum vs. Corpus`, all_results_betas_sub$`Antrum vs. Corpus`$logFC > 0.2))
+numbers[["A vs C \n hypo"]] = nrow(subset(all_results_betas_sub$`Antrum vs. Corpus`, all_results_betas_sub$`Antrum vs. Corpus`$logFC < -0.2))
+numbers[["A vs F \n hyper"]] = nrow(subset(all_results_betas_sub$`Antrum vs. Fundus`, all_results_betas_sub$`Antrum vs. Fundus`$logFC > 0.2))
+numbers[["A vs F \n hypo"]] = nrow(subset(all_results_betas_sub$`Antrum vs. Fundus`, all_results_betas_sub$`Antrum vs. Fundus`$logFC < -0.2))
+numbers[["C vs F \n hyper"]] = nrow(subset(all_results_betas_sub$`Corpus vs. Fundus`, all_results_betas_sub$`Corpus vs. Fundus`$logFC > 0.2))
+numbers[["C vs F \n hypo"]] = nrow(subset(all_results_betas_sub$`Corpus vs. Fundus`, all_results_betas_sub$`Corpus vs. Fundus`$logFC < -0.2))
+
+numbers2 = as.vector(do.call(cbind, numbers))
+barplot(numbers2, las=2, cex.names=1, col = c("red", "darkblue"), legend.text = c("Hyper", "Hypo"),  ylab = "# of diff. meth. CpGs", names.arg = c(rep("A vs C", 2), rep("A vs F", 2), rep("C vs F", 2)), ylim= c(0, (max(numbers2)+1000)))
+```
+
+## Volcano Plots
+
+### Subgroups
+
+For each comparison, the distribution of the differential methylation values (delta beta) and the negative logarithm of the adjusted p-values are plotted in the following volcano plots. The red line marks the cutoff of 0.05 of the FDR.
+
+#### FDR < 5%
+
+```{r Volcano Plots adj. p-val, fig.width=12,fig.height = 7.5}
+
+sel_samples = c("AU vs. CU","AD vs. CD", "AU vs. FU", "AD vs. FD","CU vs. FU","CD vs. FD","AD vs. AU","CD vs. CU","FD vs. FU")
+
+all_target_conditions = sel_samples
+par(mfrow=c(3,4))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.05),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+With a false discovery rate (FDR) < 0.05 there are no significant diff. meth. Cgs comparing the undiff. and diff. samples. Setting the FDR to 10 %:
+
+#### FDR < 10%
+
+```{r, fig.width=12,fig.height = 7.5}
+
+sel_samples = c("AU vs. CU","AD vs. CD","AU vs. FU","AD vs. FD","CU vs. FU","CD vs. FD","AD vs. AU","CD vs. CU","FD vs. FU")
+
+all_target_conditions = sel_samples
+par(mfrow=c(3,4))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.1 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 10 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.1),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+
+There are diff. meth. Cgs comparing the antrum and fundus samples with a FDR of 10 %. Setting the FDR to 20%:
+
+#### FDR < 20%
+
+```{r, fig.width=12,fig.height = 7.5}
+
+sel_samples = c("AU vs. CU","AD vs. CD", "AU vs. FU","AD vs. FD","CU vs. FU","CD vs. FD","AD vs. AU","CD vs. CU","FD vs. FU")
+
+all_target_conditions = sel_samples
+par(mfrow=c(3,4))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.2 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 20 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.2),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+Some diff. meth. Cgs become significant with a FDR of 20 % also for some of the antrum vs corpus comparisons.  
+With only three biological replicates it is very likely that adjusted p-values are above 0.05. Therefore I might consider using the raw p-values for filtering of results. 
+
+#### Volcano Plot with raw p-value
+
+```{r, fig.width=12,fig.height = 7.5}
+
+sel_samples = c("AU vs. CU","AD vs. CD", "AU vs. FU","AD vs. FD","CU vs. FU","CD vs. FD","AD vs. AU","CD vs. CU","FD vs. FU")
+
+all_target_conditions = sel_samples
+par(mfrow=c(3,4))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$P.Value),xlab="delta beta",ylab="-log10(p-value)", ylim=c(0,max(2,max(-log10(r$P.Value),na.rm=T))), xlim=(c(-1, 1)))
+  title(main=tc, sub=paste("(",nrow(subset(r, P.Value < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs (p < 0.05, db > 20 %)",sep="") )
+  abline(h=-log10(0.2),col="red")
+  abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+
+### Groups
+
+Volcano plot of the group comparisons with the cutoff of 5 % FDR marked with a red line.
+
+```{r, fig.width=9,fig.height = 2.5}
+
+sel_samples = c("Antrum vs. Corpus","Antrum vs. Fundus","Corpus vs. Fundus")
+all_target_conditions = sel_samples
+par(mfrow=c(1,3))
+for (tc in all_target_conditions) {
+  r = all_results_betas[[tc]]
+  plot(r$logFC, -log10(r$adj.P.Val),xlab="delta beta",ylab="-log10(adj. p-val)", ylim=c(0,max(2,max(-log10(r$adj.P.Val),na.rm=T))))
+  title(main=tc, sub=paste("(",nrow(subset(r, adj.P.Val < 0.05 & (logFC > 0.2 | logFC < -0.2)))," diff. meth. Cgs after adjusting (FDR < 5 %, db > 20 %))",sep="") )
+  abline(h=-log10(0.05),col="red")
+    abline(v=-0.2, lty = 2)
+  abline(v=0.2, lty = 2)
+}
+
+```
+ 
+# Heatmap of all differentially methylated CpGs between the subgroups
+
+CpGs with delta beta > 0.2 and < -0.2 and p < 0.05 are extracted and displayed in a heatmap:
+
+
+```{r, echo=FALSE}
+
+# First, exctract the top differentially methylated Cgs with a FDR < 20 % from all_results_betas:
+
+sign_diffmeth <- list()
+sign_diffmeth[["AU_vs_CU"]] <- rownames(subset(all_results_betas_sub$`AU vs. CU`, all_results_betas_sub$`AU vs. CU`$P.Value < 0.05))
+sign_diffmeth[["AD_vs_CD"]] <- rownames(subset(all_results_betas_sub$`AD vs. CD`, all_results_betas_sub$`AD vs. CD`$P.Value < 0.05))
+sign_diffmeth[["AU_vs_FU"]] <- rownames(subset(all_results_betas_sub$`AU vs. FU`, all_results_betas_sub$`AU vs. FU`$P.Value < 0.05))
+sign_diffmeth[["AD_vs_FD"]] <- rownames(subset(all_results_betas_sub$`AD vs. FD`, all_results_betas_sub$`AD vs. FD`$P.Value < 0.05))
+sign_diffmeth[["CU_vs_FU"]] <- rownames(subset(all_results_betas_sub$`CU vs. FU`, all_results_betas_sub$`CU vs. FU`$P.Value < 0.05)) 
+sign_diffmeth[["CD_vs_FD"]] <- rownames(subset(all_results_betas_sub$`CD vs. FD`, all_results_betas_sub$`CD vs. FD`$P.Value < 0.05)) 
+
+
+# sign_diffmeth[["AD_vs_AU"]] <- rownames(subset(all_results_betas_sub$`AD vs. AU`, all_results_betas_sub$`AD vs. AU`$P.Value < 0.05))
+# sign_diffmeth[["CD_vs_CU"]] <- rownames(subset(all_results_betas_sub$`CD vs. CU`, all_results_betas_sub$`CD vs. CU`$P.Value < 0.05))
+# sign_diffmeth[["FD_vs_FU"]] <- rownames(subset(all_results_betas_sub$`FD vs. FU`, all_results_betas_sub$`FD vs. FU`$P.Value < 0.05)) 
+
+
+
+allCgs <- unlist(sign_diffmeth)
+allCgs <- unique(allCgs)
+  
+allCgsbeta <- myNorm_batch_corrected[allCgs,]
+
+col_anno <- as.data.frame(myLoad$pd)[colnames(allCgsbeta), "Sample_Group", drop=F]
+pheatmap(allCgsbeta, show_rownames = F, annotation_col = col_anno)
+
+
+```
+
+Although the CpGs were defined as those that change between the subgroup, the cluster shows, that the differences actually are between the regions of the stomach.
+
+
+# Heatmap of all differentially methylated CpGs between the groups
+
+CpGs with delta beta > 0.2 and < -0.2 and FDR < 5% are extracted and displayed in a heatmap:
+
+```{r, echo=FALSE}
+
+# First, exctract the top differentially methylated Cgs from all_results_betas:
+
+sign_diffmeth <- list()
+sign_diffmeth[["Antrum vs Corpus"]] <- rownames(subset(all_results_betas_sub$`Antrum vs. Corpus`, all_results_betas_sub$`Antrum vs. Corpus`$adj.P.Val < 0.05))
+sign_diffmeth[["Antrum vs Fundus"]] <- rownames(subset(all_results_betas_sub$`Antrum vs. Fundus`, all_results_betas_sub$`Antrum vs. Fundus`$adj.P.Val < 0.05))
+sign_diffmeth[["Corpus vs Fundus"]] <- rownames(subset(all_results_betas_sub$`Corpus vs. Fundus`, all_results_betas_sub$`Corpus vs. Fundus`$adj.P.Val < 0.05))
+
+
+allCgs <- unlist(sign_diffmeth)
+allCgs <- unique(allCgs)
+  
+allCgsbeta <- myNorm_batch_corrected[allCgs,]
+
+col_anno <- as.data.frame(myLoad$pd)[colnames(allCgsbeta), "Sample_Group", drop=F]
+pheatmap(allCgsbeta, show_rownames = F, annotation_col = col_anno)
+
+```
+
+# Conclusion
+
+The detected differences in methylation (see volcano plots) increase with the distance of the tissue region. Differences between the undifferentiated and differentiated state of the tissue are only minor and overall largest between the corpus samples. 
+
+There might be small changes ( < 20 %) in the differentiated vs undifferentiated samples, that are cell type dependend and therefore diluted in these results. 
+
+```{r, eval = FALSE}
+sessionInfo()
+```

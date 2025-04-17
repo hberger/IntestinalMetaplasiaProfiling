@@ -1,0 +1,370 @@
+---
+title: "Validation of region specific TF gene DNA methylation in stomach IM"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(matrixStats)
+library(pheatmap)
+library(RColorBrewer)
+library(reshape2)
+library(ggplot2)
+library(GenomicRanges)
+library(data.table)
+```
+
+# Selected Regions of Interest 
+
+Regions of interest were selected based on differentially methylation results as genes with their surrounding enhancers. 
+
+```{r}
+roi_str = "SIM2: chr21:38,058,906-38,123,587 (+)
+MEIS1: chr2:66,641,425-66,816,546 (+)
+MEIS2: chr15:37,166,996-37,407,814 (-)
+NKX6-3: chr8:41,502,810-41,505,817 (-)
+WNT5A: chr8:41,502,810-41,505,817 (-)
+HOXA2: chr7:27,137,231-27,144,775 (-)
+HOXA3: chr7:27,144,834-27,167,002 (-)
+CDX2: chr13:28,526,806-28,556,693 (-)
+HNF4A: chr20:42,976,152-43,100,947 (+)
+GATA6: chr18:19,749,404-19,782,491 (+)
+TBX3: chr12:115,104,150-115,132,508 (-)
+PAX5: chr9:36,815,317-37,050,082 (-)
+TOX3: chr16:52,465,784-52,585,267 (-)
+HIVEP2: chr6:143,064,117-143,278,528 (-)
+"
+
+# IRX2: chr5:2,737,924-2,754,393 (-) 
+# IRX5: chr16:54,959,734-54,973,389 (+)
+# PDX1: chr13:28,491,143-28,504,608 (+)
+# PDX1-AS/PLUTO: chr13:28,388,297-28,504,608 (+)
+# GATA4: chr8:11,525,616-11,622,264 (+)
+# GATA4_dist_enhancer: chr8:11499600-11,622,264 (+)
+# CDX2: chr13:28,526,806-28,556,693 (-)
+# TCF7L1: chr2:85,351,212-85,539,335 (+)
+
+tmp = scan(text=roi_str, what=c("character"), quiet=T )
+tmp2 = as.data.frame(t(matrix(tmp, nrow=3, ncol=length(tmp)/3)), stringsAsFactors = F)
+
+genes_and_coord = data.frame(gene=gsub(":","", tmp2$V1), strand=gsub("\\(","", gsub("\\)","",tmp2$V3)), stringsAsFactors = F)
+genes_and_coord$chrom = as.numeric(gsub("chr","",unlist(sapply(strsplit(tmp2$V2,":"), `[`,1))))
+tmp = unlist(sapply(strsplit(tmp2$V2,":"), `[`,2))
+tmp2 = strsplit(gsub(",","",tmp), "-")
+genes_and_coord$start = as.numeric(unlist(sapply(tmp2, `[`,1)))
+genes_and_coord$end = as.numeric(unlist(sapply(tmp2, `[`,2)))
+
+genes_and_coord
+```
+
+
+
+
+# Data sets used for validation
+
+  - *in-vivo* data sets
+     - GSE103186 (Huang et al. Cancer Cell 2017). Human IM / non-IM biopsies. 450K
+
+  - *in-vitro* data sets
+     - ESGIv1/MB119 IM vs. Normal. Illumina Epic
+     - ESGIv2 IM vs. Non-IM. Illumina Epic
+
+
+```{r}
+## Encode H1esc genomic segments#
+Segments = read.delim(gzfile("../../../../Data/ExtData/genome_annotation/Encode/wgEncodeBroadHmmH1hescHMM.bed.gz"), header = F)
+Segments = subset(Segments, !grepl("Repetitive\\/CNV", V4))
+segment_ranges = GRanges(seqnames = Segments$V1, IRanges(start = Segments$V2, end = Segments$V3, names = Segments$V4))
+```
+
+
+## ESGIv2 / MPIIB
+
+```{r}
+esgiv2_env = new.env()
+load("../../../../Data/Processed/ClonalCultures/DNAm/myNorm_IM_nonIM_anno_sorted.RData", envir = esgiv2_env)
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/myLoad_IM_nonIM.RData", envir = esgiv2_env)
+
+```
+
+```{r}
+mN_anno_esgiv2 = get("myNorm_anno_sorted", esgiv2_env)
+tmp = get("myLoad", esgiv2_env)
+ed = as.data.frame(tmp$pd)
+
+ed$Cohort = "ESGIv2"
+colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+ed = subset(ed, PatientID %in% c("592","594") & Sample_Group %in% c("IM","non-IM"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Normal")
+
+anno_epic = mN_anno_esgiv2[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+colnames(anno_epic) = gsub("UCSC_Islands_Name","UCSC_CpG_Islands_Name", colnames(anno_epic))
+
+# Add genomic segmentation labels  
+myNorm_ranges = with(anno_epic, GRanges(seqnames = paste0("chr", as.character(CHR)), IRanges(start = MAPINFO, end = MAPINFO, names = rownames(mN_anno_esgiv2)) ) )
+
+seg_ovlp = findOverlaps(segment_ranges, myNorm_ranges)
+anno_epic$Seg = NA
+anno_epic$Seg[subjectHits(seg_ovlp)] = names(segment_ranges[queryHits(seg_ovlp)])
+
+```
+
+# Differentially methylated  CpGs between IM and normal stomach in ESGIv2
+
+FDR < 10% and |logFC| > 0.2
+
+```{r}
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/all_results_betas_IM_nonIM_with_healthy_annotated.RData")
+
+tmp = all_results_betas_annotated[["IMvsNormal"]]
+tmp$comparison = "IMvsNormal"
+tmp = subset(tmp, adj.P.Val < 0.05 & abs(logFC) >= 0.2)
+
+all_dm_df = merge(tmp, anno_epic, by.x="Row.names", by.y=0, all.x=T, sort=F)
+setorder(all_dm_df, CHR,MAPINFO)
+unique_dm_ids = unique(all_dm_df$Row.names)
+
+```
+
+
+```{r}
+# add flags for differentially methylated CpGs
+anno_epic$DM = ifelse(rownames(anno_epic) %in% unique_dm_ids, "DM","n.s.")
+
+ds_esgiv2 = list(mat = as.matrix(mN_anno_esgiv2[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort")])
+
+rm(esgiv2_env, mN_anno_esgiv2, myNorm_ranges)
+dummy = gc(verbose=F)
+
+```
+
+## ESGIv1 / MB119 
+
+```{r}
+esgiv1_env = new.env()
+# FIXME 2022-03-15: Check if this is the right preprocessed file used for DME analysis 
+load("../../../../Data/ExtData/Fritsche_et_al_stomach_methylation/Preprocessed/myNorm_anno_sorted.RData", envir = esgiv1_env)
+
+load("../../../../Data/ExtData/Fritsche_et_al_stomach_methylation/Preprocessed/sample_annotation.RData", envir = esgiv1_env)
+```
+
+```{r}
+mN_anno_esgiv1 = get("myNorm_anno_sorted", esgiv1_env)
+
+ed = as.data.frame(get("sample_annotation", esgiv1_env))
+
+ed$Cohort = "ESGIv1"
+colnames(ed) = gsub("Sample_Name","SampleID",colnames(ed))
+ed = subset(ed, Patient %in% c("P471","P479") & Sample_Group %in% c("IM","Normal"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Normal")
+
+anno_epic = mN_anno_esgiv1[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_CpG_Islands_Name")]
+
+# Add genomic segmentation labels  
+myNorm_ranges = with(anno_epic, GRanges(seqnames = paste0("chr", as.character(CHR)), IRanges(start = MAPINFO, end = MAPINFO, names = rownames(mN_anno_esgiv1)) ) )
+
+seg_ovlp = findOverlaps(segment_ranges, myNorm_ranges)
+anno_epic$Seg = NA
+anno_epic$Seg[subjectHits(seg_ovlp)] = names(segment_ranges[queryHits(seg_ovlp)])
+
+# add flags for differentially methylated CpGs
+anno_epic$DM = ifelse(rownames(anno_epic) %in% unique_dm_ids, "DM","n.s.")
+
+ds_esgiv1 = list(mat = as.matrix(mN_anno_esgiv1[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort")])
+
+rm(esgiv1_env, mN_anno_esgiv1, myNorm_ranges, anno_epic)
+dummy = gc(verbose=F)
+```
+
+
+## Polyclonal cohort / ZZ
+
+```{r}
+esgi_pc_env = new.env()
+load("../../../../Data/Processed/PolyclonalCultures/DNAm/myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData", envir = esgi_pc_env)
+```
+
+```{r}
+mN_anno_pc = get("myNorm_anno_sorted", esgi_pc_env)
+ed <- get("ed", esgi_pc_env) |> as.data.frame()
+
+ed$Cohort = "ESGI PC"
+colnames(ed) = gsub("Sample_ID","SampleID",colnames(ed))
+ed = subset(ed, Sample_Group %in% c("IM","NON_IM"))
+ed$Condition = ifelse(ed$Sample_Group=="IM","IM","Normal")
+
+anno_epic = mN_anno_pc[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_Islands_Name")]
+colnames(anno_epic) = gsub("UCSC_Islands_Name","UCSC_CpG_Islands_Name", colnames(anno_epic))
+
+# Add genomic segmentation labels  
+myNorm_ranges = with(anno_epic, GRanges(seqnames = paste0("chr", as.character(CHR)), IRanges(start = MAPINFO, end = MAPINFO, names = rownames(mN_anno_pc)) ) )
+
+seg_ovlp = findOverlaps(segment_ranges, myNorm_ranges)
+anno_epic$Seg = NA
+anno_epic$Seg[subjectHits(seg_ovlp)] = names(segment_ranges[queryHits(seg_ovlp)])
+
+```
+
+```{r}
+# add flags for differentially methylated CpGs
+#anno_epic$DM = ifelse(rownames(anno_epic) %in% unique_dm_ids, "DM","n.s.")
+
+ds_esgi_pc = list(mat = as.matrix(mN_anno_pc[, ed$SampleID]), anno = anno_epic, ed = ed[, c("SampleID","Condition","Cohort")])
+
+rm(esgi_pc_env, mN_anno_pc, myNorm_ranges)
+dummy = gc(verbose=F)
+
+```
+
+
+<!-- # Differentially methylated  CpGs between IM and normal stomach in ESGIv2 -->
+
+<!-- FDR < 10% and |logFC| > 0.2 -->
+
+<!-- ```{r} -->
+
+<!-- load("../../../../Data/Processed/ClonalCultures/DNAm/all_results_betas_IM_nonIM_annotated.RData") -->
+
+<!-- tmp = all_results_betas_annotated[["IMvsNonIM_592_594_avg"]] -->
+<!-- tmp$comparison = "IMvsNonIM_592_594_avg" -->
+<!-- tmp = subset(tmp, adj.P.Val < 0.1 & abs(logFC) >= 0.2) -->
+
+<!-- all_dm_df = merge(tmp, anno_epic, by.x="Row.names", by.y=0, all.x=T, sort=F) -->
+<!-- setorder(all_dm_df, CHR,MAPINFO) -->
+<!-- unique_dm_ids = unique(all_dm_df$Row.names) -->
+
+<!-- ``` -->
+
+
+## Huang et al. 
+
+```{r}
+huang_env = new.env()
+load("../../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/myNorm_anno_sorted_with_average.RData", envir=huang_env)
+
+load("../../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/myLoad.RData", envir=huang_env)
+```
+
+```{r}
+mL_Huang = get("myLoad", huang_env)
+
+ed_Huang_all = as.data.frame(mL_Huang$pd)
+ed = subset(ed_Huang_all, Sample_Group %in% c("IM","Normal"))
+rm(mL_Huang)
+ed$Cohort = "Huang et al."
+colnames(ed) = gsub("Sample_Name","SampleID",colnames(ed))
+ed$Condition = ed$Sample_Group
+
+mN_anno_Huang = get("myNorm_anno_sorted", huang_env)
+rownames(mN_anno_Huang) = mN_anno_Huang$Row.names
+
+anno_450k = mN_anno_Huang[, c("CHR","MAPINFO","Strand","Type","gene","feature","cgi","feat.cgi","UCSC_CpG_Islands_Name","DHS","Enhancer","Phantom","Probe_SNPs","Probe_SNPs_10")]
+rownames(anno_450k) = rownames(mN_anno_Huang)
+
+anno_450k = anno_450k[order(anno_450k$CHR, anno_450k$MAPINFO),]
+anno_450k$DM = ifelse(rownames(anno_450k) %in% unique_dm_ids, "DM","n.s.")
+
+ds_huang = list(mat = as.matrix(mN_anno_Huang[, ed$SampleID]), anno = anno_450k, ed = ed[, c("SampleID","Condition","Cohort")])
+
+rm(huang_env)
+dummy=gc(verbose = F)
+
+table(ed$Sample_Group, ed$Site)
+```
+
+
+```{r}
+all_ds = list(ds_esgiv1, ds_esgiv2, ds_esgi_pc, ds_huang)
+```
+
+# Heatmaps for selected TF
+
+```{r}
+anno_colors = list("CGI"=c("island"="red","opensea"="grey","shelf"="brown","shore"="yellow"),
+                   "Condition"=c("IM"="orange","Normal"="lightblue"),
+                   "Feature"=c("IGR"="grey80","TSS1500"="red","TSS200"="orange","5'UTR"="pink","1stExon"="brown4","ExonBnd"="rosybrown","Body"="green","3'UTR"="blue"), 
+                   "DM"=c("DM"="black","n.s."="white"),
+                   "Cohort"=c("ESGIv1"="green","ESGIv2"="blue","ESGI PC"="purple", "Huang et al."="brown"))
+
+breaksList = seq(0, 1, by = 0.01)
+new_colors = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList))
+
+cond_ordered = c("IM","Normal")
+cohorts_ordered = c("ESGIv1","ESGIv2","ESGI PC","Huang et al.")
+```
+
+
+
+## TFs
+
+```{r}
+# we assume that the annotation tables are already sorted by chromosome and CpG position
+extract_subtables <- function(ds, chr, start, end) {
+  cpg_ids = sapply(ds, function(x) {rownames(subset(x[["anno"]], as.character(CHR)==as.character(chr) & MAPINFO >= start & MAPINFO <= end))})
+
+  id_cnts = table(unlist(cpg_ids))
+  shared_ids = names(id_cnts)[id_cnts==length(cpg_ids)]
+  
+  row_anno = ds[[1]][["anno"]][shared_ids,]
+  row_anno = row_anno[order(row_anno$CHR, row_anno$MAPINFO),]
+  shared_ids = rownames(row_anno)
+    
+  #matrices = mapply(function(x, ids) {x[["mat"]][ids,]}, ds, cpg_ids)
+  matrices =  lapply(ds, function(x) x[["mat"]][shared_ids,] )
+  
+  combined_matrices = do.call(cbind, matrices)
+  
+  combined_ed = do.call(rbind, lapply(ds, function(x) x[["ed"]]))
+  combined_ed$Condition = factor(combined_ed$Condition, levels=cond_ordered)
+  combined_ed$Cohort = factor(combined_ed$Cohort, levels=cohorts_ordered)
+  combined_ed = combined_ed[order(combined_ed$Cohort, combined_ed$Condition, combined_ed$SampleID),]
+  
+  combined_matrices = combined_matrices[, combined_ed$SampleID]
+  
+  
+  return(list(combined_matrices, combined_ed, row_anno))
+} 
+  
+```
+
+```{r, fig.width=18, fig.height=10}
+for (ri in 1:nrow(genes_and_coord)) {
+  r_chr = genes_and_coord[ri,"chrom"]
+  r_start = genes_and_coord[ri,"start"]
+  r_end = genes_and_coord[ri,"end"]
+  
+  rr = extract_subtables(all_ds, r_chr, r_start, r_end)
+  mat = rr[[1]]
+  ed = rr[[2]]
+  anno = rr[[3]]
+
+  rownames(mat) = anno$MAPINFO
+  
+  row_anno <- data.frame("Feature" = anno$feature,
+                         "cgi" = anno$cgi,
+                         "Segment" = as.factor(anno$Seg),
+                         "DM" = anno$DM,
+                            stringsAsFactors = FALSE)
+  rownames(row_anno) <- anno$MAPINFO
+  colnames(row_anno) <- c("Feature", "CGI", "Segment","DM")
+  
+  col_anno = ed[, c("Condition","Cohort")]
+  
+  pheatmap(mat, cluster_row=F, cluster_col=F, main = paste0(genes_and_coord[ri,"gene"], " (chr", r_chr,":",r_start,"-",r_end,")"), annotation_col = col_anno, annotation_row = row_anno, breaks = breaksList, cluster_cols = F, annotation_colors = anno_colors, gaps_col = cumsum(table(ed$Cohort))[1:3])
+}
+```
+
+

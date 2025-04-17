@@ -1,0 +1,312 @@
+---
+title: "Functional enrichment DM sites - only clonal IM vs. non-IM"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(data.table)
+library(fgsea)
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+```
+
+```{r}
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_450k_and_EPIC_annotated.RData") )
+```
+
+```{r}
+cpg_anno <- all_results_betas_annotated[[1]][, c("Row.names","UCSC_RefGene_Name","UCSC_RefGene_Accession","UCSC_RefGene_Group","Phantom5_Enhancers","DMR","X450k_Enhancer","Regulatory_Feature_Group","GencodeCompV12_NAME","GencodeCompV12_Accession","GencodeCompV12_Group","DNase_Hypersensitivity_NAME","DNase_Hypersensitivity_Evidence_Count","OpenChromatin_NAME","OpenChromatin_Evidence_Count","TFBS_NAME","TFBS_Evidence_Count")]
+
+genes_split <- strsplit(cpg_anno$UCSC_RefGene_Name, ";")
+site_split <- strsplit(cpg_anno$UCSC_RefGene_Group, ";")
+gc <- S4Vectors::elementNROWS(genes_split)
+is_gene <- (gc > 0)
+
+cpg_anno_ts <- data.table(cpg_id = rep(cpg_anno$Row.names[is_gene], times=gc[is_gene]), gene = unlist(genes_split[is_gene]), site = unlist(site_split[is_gene]), key="cpg_id") 
+cpg_anno_ts <- unique(cpg_anno_ts)
+```
+
+```{r}
+gsea_gmt_folder = "../../../../Data/ExtData/genesets/MSigDB/msigdb_v2023.2.Hs_GMTs"
+#gsea_gmt_files = paste0(c("h.all.", "c2.all.","c3.all.","c5.go.bp.","c6.all.","c7.all."), "v2023.2.Hs.symbols.gmt")
+gsea_gmt_files = paste0(c("h.all.", "c2.all.","c3.all.","c5.go.bp.","c6.all."), "v2023.2.Hs.symbols.gmt")
+
+#names(gsea_gmt_files) = c("HALLMARK","PATHWAYS","MOTIF","GO_BP","ONCOGENIC","IMMUNOLOGIC")
+names(gsea_gmt_files) = c("HALLMARK","PATHWAYS","MOTIF","GO_BP","ONCOGENIC")
+gset_collections_human = list()
+for (n in names(gsea_gmt_files)) {
+  gset_collections_human[[n]] = gmtPathways(file.path(gsea_gmt_folder, gsea_gmt_files[[n]]) )
+}
+
+```
+
+
+```{r}
+test_fisher_enr <- function(query, gene_set, universe) {
+  # 0 = -/-, 1 = +/-, 2=-/+, 3=+/+
+  a1 <- universe %in% gene_set
+  a2 <- universe %in% query
+  d <- (a1 + a2*2) |> factor(levels=as.character(0:3))
+  dm <- table(d) |> matrix(2,2)
+  dmp <- dm/(sum(dm))
+  or = (dmp[1,1]*dmp[2,2])/(dmp[1,2]*dmp[2,1])
+  r <- fisher.test(dm)
+  tmp <- table(d) |> as.numeric()
+  names(tmp) <- c("d","c","b","support")
+  tmp["gs_size"] = tmp["support"] + tmp["c"]
+  return(c(pval = r$p.value, OR_MLE = as.numeric(r$estimate), OR = or,  tmp ))
+}
+library(compiler)
+test_fisher_enr_f <- compiler::cmpfun(test_fisher_enr)
+```
+
+
+```{r, eval=FALSE}
+# test enrichment algorithm
+set.seed(1234)
+
+universe_dge <- unique(cpg_anno_ts$gene)
+
+gset_lengths_msigdb <- do.call(c, gset_collections_human) |> sapply(length)
+
+# simulate random gene set collection with same total number and lengths drawn from the MSigDB gene set lengths
+
+n_total <- length(gset_lengths_msigdb)
+sim_lengths <- sample(gset_lengths_msigdb, n_total, replace=T)
+#names(sim_lengths) <- paste0("GS_", 1:length(sim_lengths))
+
+sim_gsets <- Map(function(len) { sample(universe_dge, len) }, sim_lengths)
+
+query = sample(universe_dge, 800)
+
+rr <- Map(function(x) {test_fisher_enr_f(query, x, universe_dge)}, sim_gsets) |> do.call(rbind, args=_) |> as.data.frame()
+rr$gs_name <- rownames(rr)
+rr$padj <- p.adjust(rr$pval, "BH")
+rr$logOR <- log(rr$OR)
+
+median_logOR = median(subset(rr, !is.infinite(logOR))$logOR)
+hist(rr$logOR, 100, sub=paste0("Mean logOR=", prettyNum(median_logOR, digits=3)) )
+abline(v=0, lty=2)
+abline(v=median_logOR, col="red", lwd=2)
+
+rr$gs_size = rr$support + rr$c
+rr$gs_bin <- cut(rr$gs_size, c(seq(0,200, 10), 5000) )
+with(subset(rr, !is.infinite(logOR)), boxplot(logOR ~ gs_bin, las=2, main="LogOR distribution by gene set size" ) )
+abline(h=0, lty=2)
+
+```
+
+Simulation results show that gene sets with less than around 20 genes have logOR values strongly biased towards higher values. This does not necessarily need to lower adjusted p-values, but should be considered when filtering results. 
+
+
+# Enrichment of DM genes in functional / genomic categories
+
+
+```{r}
+all_enrichment_results <- list()
+```
+
+
+## All genes
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs. CpGs mapping to all possible gene sites (5 prime / TSS, body, 3 prime) are included. 
+
+```{r}
+tmp = all_results_betas_annotated[["IMvsNormalAntrum"]]
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes_592_594 = unique(unlist(strsplit(hyper_cpg_592_594$UCSC_RefGene_Name, ";")))
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes_592_594 = unique(unlist(strsplit(hypo_cpg_592_594$UCSC_RefGene_Name, ";")))
+```
+
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+
+
+```{r}
+universe_dge <- unique(cpg_anno_ts$gene)
+query = hyper_genes_592_594
+
+all_res <- list()
+for (n in names(gset_collections_human)) {
+  rr <- Map(function(x) {test_fisher_enr_f(query, x, universe_dge)}, gset_collections_human[[n]]) |> do.call(rbind, args=_) |> as.data.frame()
+  rr$gs_name <- rownames(rr)
+  rr$collection <- n
+  all_res[[n]] <- rr
+}
+
+enrichment_hyper <- do.call(rbind, all_res)
+enrichment_hyper$padj <- p.adjust(enrichment_hyper$pval, "BH")
+enrichment_hyper$logOR <- log(enrichment_hyper$OR)
+
+all_enrichment_results[["hyperm_all_gene_sites"]] <- enrichment_hyper
+
+```
+
+```{r}
+hist(enrichment_hyper$padj, 100, main="Adj. p-value")
+hist(enrichment_hyper$logOR, 100, main = "log OR")
+```
+
+
+```{r, fig.width=7, fig.height=10}
+tmp <- subset(enrichment_hyper, padj < 0.05 & support > 5 & !grepl("^MIR|_MIR[0-9]", gs_name))
+tmp <- tmp[order(tmp$OR, decreasing = T), ]
+par(mar=c(5,14,4,1))
+barplot(tmp$logOR, names.arg = tmp$gs_name, las=2, cex.names = .5, horiz = T, xlab="log(OR)", main="Gene sets with FDR < 5% and support > 5 genes")
+abline(v=0)
+```
+
+
+
+## Hypomethylated genes
+
+```{r}
+universe_dge <- unique(cpg_anno_ts$gene)
+query = hypo_genes_592_594
+
+all_res <- list()
+for (n in names(gset_collections_human)) {
+  rr <- Map(function(x) {test_fisher_enr_f(query, x, universe_dge)}, gset_collections_human[[n]]) |> do.call(rbind, args=_) |> as.data.frame()
+  rr$gs_name <- rownames(rr)
+  rr$collection <- n
+  all_res[[n]] <- rr
+}
+
+enrichment_hypo <- do.call(rbind, all_res)
+enrichment_hypo$padj <- p.adjust(enrichment_hypo$pval, "BH")
+enrichment_hypo$logOR <- log(enrichment_hypo$OR)
+
+all_enrichment_results[["hypom_all_gene_sites"]] <- enrichment_hypo
+
+```
+
+```{r}
+hist(enrichment_hypo$padj, 100, main="Adj. p-value")
+hist(enrichment_hypo$logOR, 100, main = "log OR")
+```
+
+
+```{r, fig.width=7, fig.height=10}
+tmp <- subset(enrichment_hypo, padj < 0.05 & support > 5 & !grepl("^MIR|_MIR[0-9]", gs_name))
+tmp <- tmp[order(tmp$OR, decreasing = T), ]
+par(mar=c(5,14,4,1))
+barplot(tmp$logOR, names.arg = tmp$gs_name, las=2, cex.names = .5, horiz = T, xlab="log(OR)", main="Gene sets with FDR < 5% and support > 5 genes")
+abline(v=0)
+```
+
+
+
+## Genes mapping to CpG in 5'UTR or TSS/first exon
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs. CpGs mapping gene sites 5 prime / TSS or first exon are included. 
+
+```{r}
+tmp = all_results_betas_annotated[["IMvsNormalAntrum"]]
+hyper_cpg_592_594 = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_sites <- cpg_anno_ts[hyper_cpg_592_594$Row.names]
+hyper_genes_592_594 = unique(subset(hyper_sites, site %in% c("5'UTR","TSS1500","TSS200","1stExon"))$gene)
+
+hypo_cpg_592_594 = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_sites <- cpg_anno_ts[hypo_cpg_592_594$Row.names]
+hypo_genes_592_594 = unique(subset(hypo_sites, site %in% c("5'UTR","TSS1500","TSS200","1stExon"))$gene)
+
+```
+
+
+We identified `r length(hyper_genes_592_594)` hypermethylated and `r length(hypo_genes_592_594)` hypomethylated genes. 
+
+
+
+```{r}
+universe_dge <- unique(cpg_anno_ts$gene)
+query = hyper_genes_592_594
+
+all_res <- list()
+for (n in names(gset_collections_human)) {
+  rr <- Map(function(x) {test_fisher_enr_f(query, x, universe_dge)}, gset_collections_human[[n]]) |> do.call(rbind, args=_) |> as.data.frame()
+  rr$gs_name <- rownames(rr)
+  rr$collection <- n
+  all_res[[n]] <- rr
+}
+
+enrichment_hyper <- do.call(rbind, all_res)
+enrichment_hyper$padj <- p.adjust(enrichment_hyper$pval, "BH")
+enrichment_hyper$logOR <- log(enrichment_hyper$OR)
+
+all_enrichment_results[["hyperm_5p_TSS_1st_exon_sites"]] <- enrichment_hyper
+
+```
+
+```{r}
+hist(enrichment_hyper$padj, 100, main="Adj. p-value")
+hist(enrichment_hyper$logOR, 100, main = "log OR")
+```
+
+
+```{r, fig.width=7, fig.height=10}
+tmp <- subset(enrichment_hyper, padj < 0.1 & support > 5 & !grepl("^MIR|_MIR[0-9]", gs_name))
+tmp <- tmp[order(tmp$OR, decreasing = T), ]
+par(mar=c(5,14,4,1))
+barplot(tmp$logOR, names.arg = tmp$gs_name, las=2, cex.names = .5, horiz = T, xlab="log(OR)", main="Gene sets with FDR < 10% and support > 5 genes")
+abline(v=0)
+```
+
+
+
+## Hypomethylated genes
+
+```{r}
+universe_dge <- unique(cpg_anno_ts$gene)
+query = hypo_genes_592_594
+
+all_res <- list()
+for (n in names(gset_collections_human)) {
+  rr <- Map(function(x) {test_fisher_enr_f(query, x, universe_dge)}, gset_collections_human[[n]]) |> do.call(rbind, args=_) |> as.data.frame()
+  rr$gs_name <- rownames(rr)
+  rr$collection <- n
+  all_res[[n]] <- rr
+}
+
+enrichment_hypo <- do.call(rbind, all_res)
+enrichment_hypo$padj <- p.adjust(enrichment_hypo$pval, "BH")
+enrichment_hypo$logOR <- log(enrichment_hypo$OR)
+
+all_enrichment_results[["hypom_5p_TSS_1st_exon_sites"]] <- enrichment_hypo
+
+```
+
+```{r}
+hist(enrichment_hypo$padj, 100, main="Adj. p-value")
+hist(enrichment_hypo$logOR, 100, main = "log OR")
+```
+
+
+```{r, fig.width=7, fig.height=10}
+tmp <- subset(enrichment_hypo, padj < 0.05 & support > 5 & !grepl("^MIR|_MIR[0-9]", gs_name))
+tmp <- tmp[order(tmp$OR, decreasing = T), ]
+par(mar=c(5,14,4,1))
+barplot(tmp$logOR, names.arg = tmp$gs_name, las=2, cex.names = .5, horiz = T, xlab="log(OR)", main="Gene sets with FDR < 5% and support > 5 genes")
+abline(v=0)
+```
+
+```{r}
+writexl::write_xlsx(all_enrichment_results, path=file.path(result_folder, "Enrichment_MSigDB_450k_and_EPIC.xlsx"))
+```
+

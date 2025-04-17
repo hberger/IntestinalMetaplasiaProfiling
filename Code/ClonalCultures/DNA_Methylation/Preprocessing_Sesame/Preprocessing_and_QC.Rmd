@@ -1,0 +1,278 @@
+---
+title: "Stomach Methylation - Preprocessing and QC"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, warning=FALSE, message=FALSE}
+#library(ChAMP)
+library(ChAMPdata)
+library(minfi)
+library(sesame)
+library(RColorBrewer)
+
+library(pheatmap)
+library(dendextend)
+#library("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+library(readxl)
+
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+rerun_preprocessing = T
+```
+
+# Experimental Design:
+
+Gastric biopsies from patients with intestinal metaplasia were taken from metaplastic and non-metaplastic control sites. Primary gastric epithelial cells were extracted and expanded on feeder cells. Single cell clones were derived, expanded on feeders and then cultured for few passages as organoid cultures to remove feeder cells. 
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+To analyse the generated data in R, we will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013].
+
+
+# Samples
+
+```{r}
+d = read.table("../../../../Data/Raw/ClonalCultures/DNA_Methylation/IDAT/sample_sheet.csv", header=T, sep=",", row.names=NULL)
+rownames(d) <- paste0(d$Sentrix_ID, "_", d$Sentrix_Position)
+d[,c("Sentrix_ID","Sentrix_Position","Sample_Name", "Sample_Group","CloneID","PatientID")]
+```
+
+
+
+# Data Import
+
+Raw intensity values (red and green channel .idat files) are loaded and transformed as beta values. In this process, some filtering steps are already included:
+Probes   
+- with a detection p-value > 0.01  
+- with a bead-count < 3  
+- in which the probed CpG falls near a SNP as defined in Zhou W. *et al.*, 2016  
+- in which the probe aligns to multiple locations with bwa as defined in Nordlund *et al.*, 2013   
+and   
+- non-cg probes  
+are removed.
+
+
+```{r, message=TRUE}
+
+set.seed(123456789)
+
+if(rerun_preprocessing){
+
+  idat_path <- "../../../../Data/Raw/ClonalCultures/DNA_Methylation/IDAT_sesame"
+  betas = openSesame(idat_path, BPPARAM = BiocParallel::SerialParam(), prep = "QCDPB")
+  
+  qcs = openSesame(idat_path, prep="", func=sesameQC_calcStats)
+  
+  stat_summary_tab <- do.call(rbind, lapply(qcs, as.data.frame))
+  stat_summary_tab <- cbind(Sample_Name = d[rownames(stat_summary_tab), "Sample_Name"], stat_summary_tab)
+
+  knitr::kable(stat_summary_tab)
+  
+  save(betas, d, stat_summary_tab, file = file.path(data_storage_folder, "Betas_Sesame_IM_nonIM.RData"), compress=T)
+} else {
+  load(file.path(data_storage_folder, "Betas_Sesame_IM_nonIM.RData"))
+}
+
+```
+
+
+# SNP identity check
+
+```{r}
+idat_path <- "../../../../Data/Raw/ClonalCultures/DNA_Methylation/IDAT_sesame"
+sesameQC_plotHeatSNPs(openSesame( idat_path, func = NULL))
+```
+
+
+# Quality Control normalized Data  
+
+## MDS plot
+
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+
+
+```{r}
+## modify mdsPlot function to not show the legend
+
+my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = NULL, 
+          xlim, ylim, pch = 1, pal = brewer.pal(8, "Dark2"), legendPos = "bottomleft", 
+          legendNCol, main = NULL) 
+{
+  if (is(dat, "MethylSet") || is(dat, "RGChannelSet")) {
+    b <- getBeta(dat)
+    if (is.null(main)) 
+      main <- sprintf("Beta MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else if (is(dat, "matrix")) {
+    b <- dat
+    if (is.null(main)) 
+      main <- sprintf("MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else {
+    stop("dat must be an 'MethylSet' or 'matrix'.")
+  }
+  o <- order(-matrixStats::rowVars(b))[1:numPositions]
+  d <- dist(t(b[o, ]))
+  fit <- cmdscale(d)
+  if (missing(xlim)) 
+    xlim <- range(fit[, 1]) * 1.2
+  if (missing(ylim)) 
+    ylim <- range(fit[, 2]) * 1.2
+  if (is.null(sampGroups)) 
+    sampGroups <- rep(1, numPositions)
+  sampGroups <- as.factor(sampGroups)
+  col <- pal[sampGroups]
+  if (is.null(sampNames)) {
+    plot(fit[, 1], fit[, 2], col = col, pch = pch, xlim = xlim, 
+         ylim = ylim, xlab = "First dimension", ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+  }
+  else {
+    plot(0, 0, type = "n", xlim = xlim, ylim = ylim, xlab = "First dimension", 
+         ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+    text(fit[, 1], fit[, 2], sampNames, col = col)
+  }
+}
+
+```
+
+
+```{r MDS plot, fig.width=6, fig.height=5}
+
+my_mdsPlot(betas, numPositions = 1000, sampGroups = d[colnames(betas),]$Sample_Group, sampNames = d[colnames(betas),]$Sample_Name, legendPos = "bottomleft")
+
+my_mdsPlot(betas, numPositions = 1000, sampGroups = d[colnames(betas),]$Sample_Group, sampNames = d[colnames(betas),]$PatientID, legendPos = "bottomleft")
+
+#tiff(filename = "MDS.tiff", width = 3, height =3, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
+#my_mdsPlot(myNorm, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")
+#dev.off()
+
+```
+
+## Density Plot  
+
+The density Plot displays the beta distribution of each sample.
+
+```{r QC raw}
+first=T
+cols = RColorBrewer::brewer.pal(n=length(unique(d$Sample_Group)), "Set3")
+names(cols) <- unique(d$Sample_Group)
+for (ss in colnames(betas)) {
+  if(first) {
+    first=F
+    plot(density(betas[, ss], na.rm=T), col=cols[d[ss, "Sample_Group"]])
+  } else {
+    lines(density(betas[, ss], na.rm=T), col=cols[d[ss, "Sample_Group"]])
+  }
+}
+legend("topleft",legend=names(cols), fill=cols)
+```
+
+## Dendrogram  
+
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+```{r dendrogram}
+
+hc <- hclust(dist(t(betas)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(d[colnames(betas),]$Sample_Group)))
+names(MyColor) <- names(table(d[colnames(betas),]$Sample_Group))
+labels_colors(dend) <- MyColor[d[colnames(betas),]$Sample_Group[order.dendrogram(dend)]]
+dend <- dend %>% set("labels_cex", 0.7)
+dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[d[colnames(betas),]$Sample_Group[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(betas), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+hc <- hclust(dist(t(betas)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(d[colnames(betas),]$PatientID)))
+names(MyColor) <- names(table(d[colnames(betas),]$PatientID))
+labels_colors(dend) <- MyColor[d[colnames(betas),]$PatientID[order.dendrogram(dend)]]
+dend <- dend %>% set("labels_cex", 0.7)
+dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[as.character(d[colnames(betas),]$PatientID[order.dendrogram(dend)])])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(betas), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+```
+
+## Heatmap  
+The Heatmap visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+```{r heatmap 1000 most var}
+o <- order(-matrixStats::rowVars(betas))[1:1000]
+data <- betas[o,]
+col_anno <- as.data.frame(d)[,c("Sample_Group", "PatientID")]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8, labels_col = d[colnames(betas),"Sample_Name"])
+```
+
+```{r}
+data("probe.features.epic")
+
+
+if(rerun_preprocessing){
+  
+myNorm_anno = merge.data.frame(betas, probe.features, by=0, sort = F, all.x = T)
+
+  myNorm_anno_sorted = myNorm_anno[order(myNorm_anno$CHR, myNorm_anno$MAPINFO),]
+  rownames(myNorm_anno_sorted) = myNorm_anno_sorted$Row.names
+  myNorm_anno_sorted$Row.names = NULL
+  
+  save(myNorm_anno_sorted, file = file.path(data_storage_folder,"myNorm_IM_nonIM_anno_sorted_Sesame.RData")  )
+  
+}else{
+  load(file.path(data_storage_folder, "myNorm_IM_nonIM_anno_sorted_Sesame.RData"))
+}
+
+
+myNorm_2 <- merge.data.frame(betas, probe.features[,c("CHR", "MAPINFO", "gene", "feature", "cgi", "feat.cgi")], by=0, sort=F, all.x = T)
+ 
+write.table(myNorm_2, file = file.path(result_folder, "Normalized_betas_IM_nonIM_Sesame.txt"), row.names=F , sep="\t", dec=".")
+save(myNorm_2, file = file.path(data_storage_folder,"Normalized_betas_IM_nonIM_Sesame.RData"))
+# 
+# 
+# rownames(myNorm_2) = myNorm_2$Row.names
+# myNorm_2$Row.names = NULL
+## get full annotation from illumina:
+
+full_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Other")
+
+full_anno = full_anno[, c("UCSC_RefGene_Name", "UCSC_RefGene_Accession", "UCSC_RefGene_Group", "Phantom5_Enhancers", "DMR", "X450k_Enhancer", "Regulatory_Feature_Group", "GencodeCompV12_NAME", "GencodeCompV12_Accession", "GencodeCompV12_Group", "DNase_Hypersensitivity_NAME", "DNase_Hypersensitivity_Evidence_Count", "OpenChromatin_NAME", "OpenChromatin_Evidence_Count", "TFBS_NAME", "TFBS_Evidence_Count")]
+
+# full_anno = merge.data.frame(probe.features[,c("CHR", "MAPINFO", "gene", "feature", "cgi", "feat.cgi"), drop=F], full_anno, by=0, sort =F)
+# rownames(full_anno) = full_anno$Row.names
+# full_anno$Row.names = NULL
+
+myNorm_2 = merge.data.frame(myNorm_2, full_anno, by.x="Row.names", by.y=0, sort=F, all.x=T)
+
+write.table(myNorm_2, file = file.path(result_folder, "Normalized_betas_IM_nonIM_fully_annotated.txt_Sesame"), row.names = F, sep = "\t", dec = ".")
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

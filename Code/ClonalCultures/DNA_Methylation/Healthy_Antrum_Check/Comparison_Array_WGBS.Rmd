@@ -1,0 +1,312 @@
+---
+title: "Stomach Methylation - Preprocessing and QC"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, warning=FALSE, message=FALSE}
+library(pheatmap)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+library(RColorBrewer)
+library(readxl)
+
+# 
+# result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+# if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+#if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+
+```
+
+# Overview
+
+We here use the averaged WGBS data from WGBS atlas and the methylation array data from Kristin Fritsches ALI stomach samples to compare array and WGBS in stomach antrum. 
+
+
+```{r}
+ed <- read.table( "../../../../Data/Raw/ClonalCultures/DNA_Methylation/IDAT_with_healthy_stomach/sample_sheet_with_healthy_stomach.csv", sep=",", header=T)
+ed$sample_label <- ifelse(substr(ed$Sample_ID,1,2)=="DE", paste0(ed$Sample_Group, "_", ed$PatientID, "_", ed$CloneID), ed$Sample_ID)
+
+
+load(file.path(data_storage_folder,"myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData") )
+antrum_array <- myNorm_anno_sorted[, c("23-AU","24-AU","26-AU", "23-AD","24-AD", "26-AD")]
+antrum_avg <- rowMeans(antrum_array)
+
+corpus_avg <- myNorm_anno_sorted[, c("23-CU","24-CU","26-CU", "23-CD","24-CD", "26-CD")] |> rowMeans()
+
+fundus_array <- myNorm_anno_sorted[, c("23-FU","24-FU","26-FU", "23-FD","24-FD", "26-FD")]
+fundus_avg <- rowMeans(fundus_array)
+
+im_samples <- subset(ed, ed$Sample_Group=="IM")$Sample_ID
+nonim_samples <- subset(ed, ed$Sample_Group=="non-IM")$Sample_ID
+
+
+im_avg <- myNorm_anno_sorted[, im_samples] |> rowMeans()
+nonim_avg <- myNorm_anno_sorted[, nonim_samples] |> rowMeans()
+ 
+
+
+```
+
+```{r}
+wgbs <- readRDS(file=file.path("../../../../Data/Processed/WGBS", "WGS_Cpg_Meth_avg_beta.rds"))
+wgbs <- wgbs[!is.na(wgbs$ilmn_id), ]
+```
+
+
+```{r}
+comb_data <- wgbs
+comb_data$antrum_array <- antrum_avg[wgbs$ilmn_id]
+comb_data$corpus_array <- corpus_avg[wgbs$ilmn_id]
+comb_data$fundus_array <- fundus_avg[wgbs$ilmn_id]
+comb_data$im_array <- im_avg[wgbs$ilmn_id]
+comb_data$nonim_array <- nonim_avg[wgbs$ilmn_id]
+comb_data <- comb_data[!is.na(comb_data$antrum_array), ]
+rownames(comb_data) <- comb_data$ilmn_id
+```
+
+```{r}
+sel_samples <- c("Gastric.antrum","Gastric.body","Gastric.fundus","Small.int", "Colon.Left", "Colon.Right","antrum_array", "corpus_array","fundus_array", "nonim_array", "im_array")
+```
+
+
+# Global correlation
+
+```{r}
+cc <- cor(as.matrix(comb_data[,sel_samples]), method="spearman")
+
+pheatmap(cc)
+```
+
+# Differences vs. WGBS Antrum
+
+
+```{r}
+diffs <- sweep(comb_data[,sel_samples], 1, comb_data$Gastric.antrum, "-")
+```
+
+```{r}
+cc <- cor(diffs[, colnames(diffs) != "Gastric.antrum"], method="spearman")
+
+pheatmap(cc)
+```
+```{r}
+colSums(diffs) |> sort()
+```
+
+
+# Differences vs. Array Antrum
+
+
+```{r}
+diffs <- sweep(comb_data[sel_samples], 1, comb_data$antrum_array, "-")
+```
+
+```{r}
+cc <- cor(diffs[, colnames(diffs) != "antrum_array"], method="spearman")
+
+pheatmap(cc)
+```
+
+```{r}
+colSums(diffs) |> sort()
+colSums(abs(diffs)) |> sort()
+```
+
+```{r}
+diffs2 <- diffs |> (\(x) {x[x<0.2] <- 0; x})()
+```
+
+```{r}
+cc <- cor(diffs2[, colnames(diffs2) != "antrum_array"], method="spearman")
+
+pheatmap(cc)
+```
+```{r}
+colSums(diffs2) |> sort()
+colSums(abs(diffs2)) |> sort()
+```
+
+```{r}
+apply(abs(diffs2) > 0.2, 2, sum)
+```
+## All array samples 
+
+```{r}
+all_array_samples <- myNorm_anno_sorted[, grepl("-AU|-AD|-CU|-CD|-FU|-FD",colnames(myNorm_anno_sorted))]
+all_array_samples$ID <- rownames(all_array_samples)
+all_samples <- merge(wgbs[, c(colnames(wgbs)[1:6],"ilmn_id")], all_array_samples, by.x="ilmn_id", by.y="ID")
+```
+
+
+```{r}
+## modify mdsPlot function to not show the legend
+
+my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = NULL, 
+          xlim, ylim, pch = 1, pal = brewer.pal(8, "Dark2"), legendPos = "bottomleft", 
+          legendNCol, main = NULL) 
+{
+  if (is(dat, "matrix")) {
+    b <- dat
+    if (is.null(main)) 
+      main <- sprintf("MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else {
+    stop("dat must be an 'MethylSet' or 'matrix'.")
+  }
+  o <- order(-matrixStats::rowVars(b))[1:numPositions]
+  d <- dist(t(b[o, ]))
+  fit <- cmdscale(d)
+  if (missing(xlim)) 
+    xlim <- range(fit[, 1]) * 1.2
+  if (missing(ylim)) 
+    ylim <- range(fit[, 2]) * 1.2
+  if (is.null(sampGroups)) 
+    sampGroups <- rep(1, numPositions)
+  sampGroups <- as.factor(sampGroups)
+  col <- pal[sampGroups]
+  if (is.null(sampNames)) {
+    plot(fit[, 1], fit[, 2], col = col, pch = pch, xlim = xlim, 
+         ylim = ylim, xlab = "First dimension", ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+  }
+  else {
+    plot(0, 0, type = "n", xlim = xlim, ylim = ylim, xlab = "First dimension", 
+         ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+    text(fit[, 1], fit[, 2], sampNames, col = col)
+  }
+  legend(legendPos, legend = levels(sampGroups), fill=pal[1:length(unique(sampGroups))])
+}
+
+```
+
+
+```{r MDS plot, fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 2:ncol(all_samples)])
+sample_groups = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "23-AU"="Antrum","24-AU"="Antrum","26-AU"="Antrum","23-AD"="Antrum","24-AD"="Antrum","26-AD"="Antrum",
+                  "23-CU"="Corpus","24-CU"="Corpus","26-CU"="Corpus","23-CD"="Corpus","24-CD"="Corpus","26-CD"="Corpus",
+                  "23-FU"="Fundus","24-FU"="Fundus","26-FU"="Fundus","23-FD"="Fundus","24-FD"="Fundus","26-FD"="Fundus")
+
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomleft")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomleft")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomleft")
+```
+
+# DM CpGs
+
+```{r}
+load("../../../../Data/Processed/ClonalCultures/DNAm/Methylation_DM_lists.Rdata")
+```
+
+```{r}
+l_hyper <- all_hyper_cpg$IM_vs_healthy$Row.names
+l_hypo <- all_hypo_cpg$IM_vs_healthy$Row.names
+
+comb_hyper <- subset(comb_data, ilmn_id %in% l_hyper)
+comb_hypo <- subset(comb_data, ilmn_id %in% l_hypo)
+```
+
+
+## Hypermeth. CpGs
+
+```{r}
+diffs <- sweep(comb_hyper[sel_samples], 1, comb_hyper$Gastric.antrum, "-")
+```
+
+```{r}
+cc <- cor(diffs[, colnames(diffs) != "Gastric.antrum"], method="spearman")
+
+pheatmap(cc)
+```
+```{r}
+colSums(diffs) |> sort()
+```
+
+
+
+## Hypometh. CpGs
+
+```{r}
+diffs <- sweep(comb_hypo[sel_samples], 1, comb_hypo$Gastric.antrum, "-")
+```
+
+```{r}
+cc <- cor(diffs[, colnames(diffs) != "Gastric.antrum"], method="spearman")
+
+pheatmap(cc)
+```
+
+```{r}
+colSums(diffs) |> sort()
+```
+
+
+## Shifts in hyper- or hypomethylated IM-associated CpGs across sites and conditions in WGBS and array data
+
+
+```{r, fig.width=8, fig.height=6}
+diffs3 <- sweep(comb_data[sel_samples], 1, comb_data$Gastric.antrum, "-")
+diffs3$id <- rownames(diffs3)
+
+diffs3_ts <- reshape2::melt(diffs3)
+
+diffs3_ts$hyper <- ifelse(diffs3_ts$id %in% l_hyper, "hyper","ns")
+diffs3_ts$hypo <- ifelse(diffs3_ts$id %in% l_hypo, "hypo", "ns")
+diffs3_ts$feature <- myNorm_anno_sorted[diffs3_ts$id, "feature"]
+
+par(mar=c(10,4,4,1))
+boxplot(diffs3_ts$value ~ diffs3_ts$hyper + diffs3_ts$variable, las=2, ylab="CpG beta differences to WGBS Antrum", xlab="", main="Hypermethylated CpGs in IM vs. healthy antrum arrays", outline=F)
+abline(h=0, col="red", lty=2)
+abline(h=c(-0.2, 0.2), col="grey80", lty=2)
+
+
+par(mar=c(10,4,4,1))
+boxplot(diffs3_ts$value ~  diffs3_ts$hypo + diffs3_ts$variable, las=2, ylab="CpG beta differences to WGBS Antrum", xlab="", main="Hypomethylated CpGs in IM vs. healthy antrum arrays", outline=F)
+abline(h=0, col="red", lty=2)
+abline(h=c(-0.2, 0.2), col="grey80", lty=2)
+
+```
+
+### By feature
+
+
+```{r, fig.width=12, fig.height=6}
+par(mar=c(15,4,4,1))
+with(subset(diffs3_ts, variable %in% c("Colon.Right","antrum_array", "im_array")), boxplot(value ~ hyper + feature + droplevels(variable), las=2, ylab="CpG beta differences to WGBS Antrum", xlab="", main="Hypermethylated CpGs in IM vs. healthy antrum arrays", outline=F) )
+abline(h=0, col="red", lty=2)
+abline(h=c(-0.2, 0.2), col="grey80", lty=2)
+
+par(mar=c(15,4,4,1))
+with(subset(diffs3_ts, variable %in% c("Colon.Right","antrum_array", "im_array")), boxplot(value ~ hypo + feature + droplevels(variable), las=2, ylab="CpG beta differences to WGBS Antrum", xlab="", main="Hypomethylated CpGs in IM vs. healthy antrum arrays", outline=F) )
+abline(h=0, col="red", lty=2)
+abline(h=c(-0.2, 0.2), col="grey80", lty=2)
+
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

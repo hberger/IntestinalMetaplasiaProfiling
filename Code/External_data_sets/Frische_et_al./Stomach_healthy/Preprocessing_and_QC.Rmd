@@ -1,0 +1,465 @@
+---
+title: "Stomach Methylation - Preprocessing and QC"
+author: "Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/")
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+setwd("/data/projects/MB119_Methylation/analysis/MB119-F005_Stomach_Methylation/Complete_Analysis/Preprocessing_and_QC/")
+
+library(ChAMP)
+library(ChAMPdata)
+#library(matrixStats)
+library(pheatmap)
+library(dendextend)
+#library("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+
+```
+
+# Experimental Design:
+
+Gastric epithelial cells of antrum, corpus and fundus were isolated from sleeve resection tissue and cultivated as organoids. After one to two passages, Air-Liquid-Interface (ALI) culture was started and when cells had developed a completly polarized and sealed monolayer, differentiation was induced by removing Wnt and R-spoding from the cell culture medium for seven days. The so obtained samples are:  
+- Antrum undifferentiated (AU)  
+- Antrum differentiated (AD)  
+- Corpus undifferentiated (CU)  
+- Corpus differentiated (CD)  
+- Fundus undifferentiated (FU)  
+- Fundus differentiated (FD)  
+
+DNA was isolated and hybridized to the Illumina EPIC methylation array.
+
+To analyse the generated data in R, we will use and further adapt the "Chip Analysis Methylation Pipeline" (ChAMP) package [Morris J, *et al.*, 2013].
+
+
+# Data Import
+
+Raw intensity values (red and green channel .idat files) are loaded and transformed as beta values. In this process, some filtering steps are already included:
+Probes   
+- with a detection p-value > 0.01  
+- with a bead-count < 3  
+- in which the probed CpG falls near a SNP as defined in Zhou W. *et al.*, 2016  
+- in which the probe aligns to multiple locations with bwa as defined in Nordlund *et al.*, 2013   
+and   
+- non-cg probes  
+are removed.
+
+
+```{r, message=TRUE}
+
+set.seed(123456789)
+
+if(FALSE){
+  
+  myLoad = champ.load(directory = "/data/projects/MB119_Methylation/Raw/EPIC_Stomach", arraytype = "EPIC", force = T, method = "minfi")
+
+
+  save(myLoad, file = "myLoad.RData")
+} else {
+  load("myLoad.RData")
+}
+
+
+```
+
+# Quality Control raw data
+
+The QC function uses the raw beta values for initial quality control:  
+- The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the    top 1,000 most variable probes of all samples.  
+- The density Plot displays the beta distribution of each sample  
+- The dendrogram clusters all samples (the distance between the samples is calculated directly by   all probes)  
+
+
+```{r QC raw}
+
+champ.QC()
+
+
+```
+
+
+# Normalization
+
+The normlization method applied here is "SWAN (subset-quantile within array normalization)" [Maksimovic J, *et al.*, 2012], which adjusts for the type I and type II bias of the methylation array. 
+
+```{r Normalization} 
+
+
+if(FALSE){
+  myNorm = champ.norm(method = "SWAN", arraytype = "EPIC")
+
+  save(myNorm, file = "myNorm.RData")
+} else {
+  load("myNorm.RData")
+}
+
+```
+
+# Quality Control normalized Data  
+
+## MDS plot  
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+## modify mdsPlot function to not show the legend
+```{r}
+my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = NULL, 
+          xlim, ylim, pch = 1, pal = brewer.pal(8, "Dark2"), legendPos = "bottomleft", 
+          legendNCol, main = NULL) 
+{
+  if (is(dat, "MethylSet") || is(dat, "RGChannelSet")) {
+    b <- getBeta(dat)
+    if (is.null(main)) 
+      main <- sprintf("Beta MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else if (is(dat, "matrix")) {
+    b <- dat
+    if (is.null(main)) 
+      main <- sprintf("MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else {
+    stop("dat must be an 'MethylSet' or 'matrix'.")
+  }
+  o <- order(-matrixStats::rowVars(b))[1:numPositions]
+  d <- dist(t(b[o, ]))
+  fit <- cmdscale(d)
+  if (missing(xlim)) 
+    xlim <- range(fit[, 1]) * 1.2
+  if (missing(ylim)) 
+    ylim <- range(fit[, 2]) * 1.2
+  if (is.null(sampGroups)) 
+    sampGroups <- rep(1, numPositions)
+  sampGroups <- as.factor(sampGroups)
+  col <- pal[sampGroups]
+  if (is.null(sampNames)) {
+    plot(fit[, 1], fit[, 2], col = col, pch = pch, xlim = xlim, 
+         ylim = ylim, xlab = "First dimension", ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+  }
+  else {
+    plot(0, 0, type = "n", xlim = xlim, ylim = ylim, xlab = "First dimension", 
+         ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+    text(fit[, 1], fit[, 2], sampNames, col = col)
+  }
+}
+
+```
+
+
+```{r MDS plot, fig.width=3, fig.height=2.5}
+
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$Sample_Name, legendPos = "bottomleft")
+
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Site, sampNames = myLoad$pd$Sample_Name, legendPos = "bottomleft")
+
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Site, legendPos = "bottomleft", pch = 21)
+
+sample_annotation = as.data.frame(myLoad$pd)
+sample_annotation$Sample_Group = c(rep("Antrum (+W/R)", 3), rep("Antrum (-W/R)", 3), rep("Corpus (+W/R)", 3), rep("Corpus (-W/R)", 3), rep("Fundus (+W/R)", 3), rep("Fundus (-W/R)", 3)) 
+
+# postscript("MDS.eps", height = 4, width = 5, horizontal = F, onefile = F, paper = "special", colormodel = "cmyk")
+# mdsPlot(myNorm, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "MDS\n 1,000 most variable CpGs")
+# dev.off()
+
+my_mdsPlot(myNorm, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")
+
+tiff(filename = "MDS.tiff", width = 3, height =3, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
+my_mdsPlot(myNorm, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")
+dev.off()
+
+```
+
+
+## Density Plot  
+The density Plot displays the beta distribution of each sample.
+
+```{r density plot}
+
+densityPlot(dat = myNorm, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of normalized data (", nrow(myNorm), " probes)", sep = ""))
+
+densityPlot(dat = myNorm, sampGroups = myLoad$pd$Site, main = paste("Density plot of normalized data (", nrow(myNorm), " probes)", sep = ""))
+```
+
+## Dendrogram  
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+```{r dendrogram}
+
+hc <- hclust(dist(t(myNorm)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(myLoad$pd$Sample_Group)))
+names(MyColor) <- names(table(myLoad$pd$Sample_Group))
+labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]
+dend <- dend %>% set("labels_cex", 0.7)
+dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+hc <- hclust(dist(t(myNorm)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(myLoad$pd$Site)))
+names(MyColor) <- names(table(myLoad$pd$Site))
+labels_colors(dend) <- MyColor[myLoad$pd$Site[order.dendrogram(dend)]]
+dend <- dend %>% set("labels_cex", 0.7)
+dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Site[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+```
+
+
+## Heatmap  
+The Heatmap visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+```{r heatmap 1000 most var}
+
+
+o <- order(-matrixStats::rowVars(myNorm))[1:1000]
+data <- myNorm[o,]
+col_anno <- as.data.frame(myLoad$pd)["Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+
+col_anno <- as.data.frame(myLoad$pd)["Site", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+```
+
+# Batch effect correction  
+
+With the ChAMP SVD function (runs Singular Value Decomposition on a dataset to estimate the impact of batch effects) I test for putative batch effects and perform subsequently batch effect correction using the champ.runCombat method for batch adjustment, adjusting for the slide, which at the same time adjusts for the patient effect as well, because each patient was hybridized to a different slide.
+
+The first plot shows the result of the SVD analysis before adjustment. Then the data are adjusted for "slide". And the second plots shows the result of the SVD analysis after adjustment.   
+
+```{r batch effect correction SWAN}
+
+champ.SVD(RGEffect = TRUE, beta = myNorm)
+
+if(FALSE) {
+  myNorm_batch_corrected <- champ.runCombat(beta = myNorm)
+  
+save(myNorm_batch_corrected, file = "myNorm_batch_corrected.RData")
+
+} else {
+  load("myNorm_batch_corrected.RData")
+
+}
+
+champ.SVD(beta = myNorm_batch_corrected, RGEffect = TRUE, resultsDir = "./CHAMP_SVDimages_batch_corrected/")
+
+```
+
+```{r}
+
+myNorm_2 <- myNorm_batch_corrected
+
+myNorm_2 <- cbind(myNorm_2, "AVG_AU" = rowMeans(myNorm_2[,c("23-AU", "24-AU", "26-AU")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_AD" = rowMeans(myNorm_2[,c("23-AD", "24-AD", "26-AD")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_CU" = rowMeans(myNorm_2[,c("23-CU", "24-CU", "26-CU")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_CD" = rowMeans(myNorm_2[,c("23-CD", "24-CD", "26-CD")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_FU" = rowMeans(myNorm_2[,c("23-FU", "24-FU", "26-FU")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_FD" = rowMeans(myNorm_2[,c("23-FD", "24-FD", "26-FD")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_A" = rowMeans(myNorm_2[,c("23-AU", "24-AU", "26-AU", "23-AD", "24-AD", "26-AD")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_C" = rowMeans(myNorm_2[,c("23-CU", "24-CU", "26-CU", "23-CD", "24-CD", "26-CD")]))
+myNorm_2 <- cbind(myNorm_2, "AVG_F" = rowMeans(myNorm_2[,c("23-FU", "24-FU", "26-FU", "23-FD", "24-FD", "26-FD")]))
+
+
+data("probe.features.epic")
+
+
+if(FALSE){
+  
+  myNorm_anno = merge.data.frame(myNorm_2, probe.features, by=0, sort = F, all.x = T)
+
+  myNorm_anno_sorted = myNorm_anno[order(myNorm_anno$CHR, myNorm_anno$MAPINFO),]
+  rownames(myNorm_anno_sorted) = myNorm_anno_sorted$Row.names
+  myNorm_anno_sorted$Row.names = NULL
+
+  save(myNorm_anno_sorted, file = "myNorm_anno_sorted_with_AVG.RData")  
+  
+}else{
+  load("myNorm_anno_sorted_with_AVG.RData")
+}
+
+
+myNorm_2 <- merge.data.frame(myNorm_2, probe.features[,c("CHR", "MAPINFO", "gene", "feature", "cgi", "feat.cgi")], by=0, sort=F, all.x = T)
+
+write.table(myNorm_2, file = "Normalized_betas.txt", row.names=F , sep="\t", dec=".")
+save(myNorm_2, file = "Normalized_betas.RData")
+
+
+rownames(myNorm_2) = myNorm_2$Row.names
+myNorm_2$Row.names = NULL
+## get full annotation from illumina:
+
+full_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b2.hg19, "Other")
+
+full_anno = full_anno[, c("UCSC_RefGene_Name", "UCSC_RefGene_Accession", "UCSC_RefGene_Group", "Phantom5_Enhancers", "DMR", "X450k_Enhancer", "Regulatory_Feature_Group", "GencodeCompV12_NAME", "GencodeCompV12_Accession", "GencodeCompV12_Group", "DNase_Hypersensitivity_NAME", "DNase_Hypersensitivity_Evidence_Count", "OpenChromatin_NAME", "OpenChromatin_Evidence_Count", "TFBS_NAME", "TFBS_Evidence_Count")]
+
+# full_anno = merge.data.frame(probe.features[,c("CHR", "MAPINFO", "gene", "feature", "cgi", "feat.cgi"), drop=F], full_anno, by=0, sort =F)
+# rownames(full_anno) = full_anno$Row.names
+# full_anno$Row.names = NULL
+
+myNorm_2 = merge.data.frame(myNorm_2, full_anno, by=0, sort=F, all.x=T)
+
+write.table(myNorm_2, file = "Normalized_betas_fully_annotated.txt", row.names = F, sep = "\t", dec = ".")
+
+
+
+```
+
+# Quality Control normalized and batch corrected Data
+
+## MDS plot  
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 or top 10,000 most variable probes of all samples.
+
+```{r MDS plot 2 SWAN, fig.height=2.5, fig.width=3}
+
+mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, sampNames = myLoad$pd$Sample_Name, legendPos = "topright", legendNCol = 2)
+
+mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups = myLoad$pd$Site, sampNames = myLoad$pd$Sample_Name, legendPos = "topright", legendNCol = 2)
+
+
+# colors: 
+# antrum:#011efe
+# corpus:#0bff01
+# fundus:#fdfe02
+# atrophy:#fe00f6
+# IM:#fe0000
+my_mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")
+
+
+tiff(filename = "MDS_adjusted.tiff", width = 3, height =3, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
+my_mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "")
+dev.off()
+
+
+# postscript("MDS_adjusted.eps", height = 4, width = 5, horizontal = F, onefile = F, paper = "special", colormodel = "cmyk")
+# mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups =sample_annotation$Sample_Group, legendPos = "topleft", legendNCol = 1, pch = 16, pal = c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00"), main = "MDS\n 1,000 most variable CpGs")
+# dev.off()
+
+
+```
+
+## Density Plot
+The density Plot displays the beta distribution of each sample.
+
+```{r density plot 2}
+
+densityPlot(dat = myNorm_batch_corrected, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of (", nrow(myNorm), " probes) - SWAN and batch corrected", sep = ""))
+
+densityPlot(dat = myNorm_batch_corrected, sampGroups = myLoad$pd$Site, main = paste("Density plot of (", nrow(myNorm), " probes) - SWAN and batch corrected", sep = ""))
+```
+
+## Dendrogram
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+
+```{r dendrogram 2, fig.height=3, fig.width=4.5}
+
+hc <- hclust(dist(t(myNorm_batch_corrected)))
+dend <- as.dendrogram(hc)
+MyColor <- c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00")
+names(MyColor) <- names(table(sample_annotation$Sample_Group))
+labels_colors(dend) <- MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]]
+#dend <- dend %>% set("labels_cex", value = 0.7)
+#dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]])
+plot(dend, center = TRUE, cex.lab = 0.8, cex.axis = 0.8)
+#legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+tiff(filename = "Dendro_adjusted_wo_legend.tiff", width = 4.5, height =3, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
+plot(dend, center = TRUE, cex.lab = 0.8, cex.axis = 0.8)
+dev.off()
+
+plot(NULL ,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+tiff(filename = "Dendro_adjusted.tiff", width = 4.5, height =4.5, units = "in", pointsize = 12, compression = c("none"), bg = "transparent", res = 600, family = "")
+plot(NULL ,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend("topright", fill = MyColor, legend = names(MyColor))
+dev.off()
+
+
+
+hc <- hclust(dist(t(myNorm_batch_corrected)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(myLoad$pd$Site)))
+names(MyColor) <- names(table(myLoad$pd$Site))
+labels_colors(dend) <- MyColor[myLoad$pd$Site[order.dendrogram(dend)]]
+dend <- dend %>% set("labels_cex", 0.7)
+dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Site[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples - batch corrected (", nrow(myNorm_batch_corrected), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+# postscript("Dendro_adjusted_wo_legend.eps", height = 4, width = 5, horizontal = F, onefile = F, paper = "special", colormodel = "cmyk")
+# hc <- hclust(dist(t(myNorm_batch_corrected)))
+# dend <- as.dendrogram(hc)
+# MyColor <- c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00")
+# names(MyColor) <- names(table(sample_annotation$Sample_Group))
+# labels_colors(dend) <- MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]]
+# dend <- dend %>% set("labels_cex", 0.7)
+# dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]])
+# plot(dend, center = TRUE, main = paste("All samples - batch corrected (", nrow(myNorm_batch_corrected), " CpGs)", sep = ""))
+# dev.off()
+
+
+# postscript("Dendro_adjusted.eps", height = 4, width = 5, horizontal = F, onefile = F, paper = "special", colormodel = "cmyk")
+# hc <- hclust(dist(t(myNorm_batch_corrected)))
+# dend <- as.dendrogram(hc)
+# MyColor <- c("#00afff", "#000fff", "#00d700", "#005f00",  "#ffd700", "#d7af00")
+# names(MyColor) <- names(table(sample_annotation$Sample_Group))
+# labels_colors(dend) <- MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]]
+# dend <- dend %>% set("labels_cex", 0.7)
+# dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[sample_annotation$Sample_Group[order.dendrogram(dend)]])
+# plot(dend, center = TRUE, main = paste("All samples - batch corrected (", nrow(myNorm_batch_corrected), " CpGs)", sep = ""))
+# legend("topright", fill = MyColor, legend = names(MyColor))
+# dev.off()
+
+
+
+```
+
+
+## Heatmap
+The Heatmap visualizes the similarity of the samples based on the top 1,000 or top 10,000 most variable probes of all samples.
+
+```{r heatmap 1000 most var 2}
+
+o <- order(-matrixStats::rowVars(myNorm_batch_corrected))[1:1000]
+data <- myNorm_batch_corrected[o,]
+col_anno <- as.data.frame(myLoad$pd)[colnames(data), "Sample_Group", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs - batch corrected", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+
+col_anno <- as.data.frame(myLoad$pd)[colnames(data), "Site", drop=F]
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs - batch corrected", show_rownames = FALSE, annotation_col = col_anno, fontsize_col = 8)
+```
+
+# Conclusion
+
+The not normalized and not batch corrected beta values of the last replicate (hGAT26) show some deviation in the beta value distribution. But  Normalization (SWAN) seems to adjust the distribution and furthermore, after adjusting for batch effect (which at the same time corrects also for "patient", because each patient was hybridized to the same slide) , the distriution of beta values seem to be corrrected and the normalized and batch corrected data set will be used for differential methylation analysis.  
+
+The MDS plot, Density plot and heatmap of the normalized and adjusted beta values shows a clear cluster of the analysed stomach regions, but differences between the conditions (undifferentiated/differentiated) appear to be only minor or not existent.
+
+This analysis reveals that the methylation pattern of the three stomach regions (antrum, corpus, and fundus) seems to define each region individually and is consistent over three patients.
+
+```{r, eval=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+sessionInfo()
+```

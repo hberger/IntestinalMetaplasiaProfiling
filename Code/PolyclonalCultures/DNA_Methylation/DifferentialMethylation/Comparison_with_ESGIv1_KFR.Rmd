@@ -1,0 +1,235 @@
+---
+title: "Comparison ESGIv2 - KFR ESGIv1 DM data"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(data.table)
+
+library(STRINGdb)
+string_db <- STRINGdb$new( version="11.5", species=9606, score_threshold=200, input_directory="")
+
+library(hypeR)
+library(tidyverse)
+library(reactable)
+library(cowplot)
+```
+
+```{r}
+load("./Results/data_storage/2021-06-10/all_results_betas_annotated.RData")
+```
+
+```{r}
+kfr_env = new.env()
+load("/data_genome2/projects/MB119_Methylation/Paper_MB119/IM/Differential_Methylation_gene_level/DM_genes.RData", envir = kfr_env)
+load("/data_genome2/projects/MB119_Methylation/Paper_MB119/IM/Differential_Methylation_gene_level/Hyper_genes.RData", envir = kfr_env)
+load("/data_genome2/projects/MB119_Methylation/Paper_MB119/IM/Differential_Methylation_gene_level/Hypo_genes.RData", envir = kfr_env)
+
+esgiv1_hyper_genes = get("Hyper_genes", kfr_env)[[1]]
+colnames(esgiv1_hyper_genes) = c("gene","ESGIv1_dm_cpg","total_cpg")
+esgiv1_hypo_genes = get("Hypo_genes", kfr_env)[[1]]
+colnames(esgiv1_hypo_genes) = c("gene","ESGIv1_dm_cpg","total_cpg")
+
+
+esgiv1_dm_genes = rbind(esgiv1_hyper_genes, esgiv1_hypo_genes)
+esgiv1_dm_genes$direction_ESGIv1 = c(rep("hyper",nrow(esgiv1_hyper_genes)), rep("hypo",nrow(esgiv1_hypo_genes)))
+
+```
+
+```{r}
+d = as.data.table(all_results_betas_annotated[["IMvsNonIM_592_594_avg"]])
+d[, GeneSymbol := unlist(sapply(strsplit(UCSC_RefGene_Name,";"), function(x) paste(unique(x), collapse=";")))]
+
+d_agg_by_gene = subset(d, GeneSymbol != "")[, .(hyper_ESGIv2 = sum(logFC>0 & adj.P.Val < 0.1), hypo_ESGIv2=sum(logFC < 0 & adj.P.Val < 0.1 ), total=.N), by="GeneSymbol"]
+
+d_sign = subset(d_agg_by_gene, hyper_ESGIv2 > 0 | hypo_ESGIv2 >0)
+```
+
+```{r}
+kfr_env2 = new.env()
+load("/data_genome2/projects/MB119_Methylation/Paper_MB119/Healthy/Differential_Methylation_gene_level/Hyper_genes.RData", kfr_env2)
+load("/data_genome2/projects/MB119_Methylation/Paper_MB119/Healthy/Differential_Methylation_gene_level/Hypo_genes.RData", kfr_env2)
+
+healthy_hyper_genes = get("Hyper_genes", kfr_env2)[[ "Antrum vs. Corpus"]]
+colnames(healthy_hyper_genes) = c("gene","AvC_dm_cpg","AvC_total_cpg")
+healthy_hypo_genes = get("Hypo_genes", kfr_env2)[[ "Antrum vs. Corpus"]]
+colnames(healthy_hypo_genes) = c("gene","AvC_dm_cpg","AvC_total_cpg")
+
+healthy_AvC_dm_genes = rbind(healthy_hyper_genes, healthy_hypo_genes)
+healthy_AvC_dm_genes$direction_AvC = c(rep("hyper",nrow(healthy_hyper_genes)), rep("hypo",nrow(healthy_hypo_genes)))
+```
+
+```{r}
+d_v1_and_v2 = merge(d_sign, esgiv1_dm_genes, by.x="GeneSymbol", by.y="gene")
+d_v1_and_v2_and_healthy = merge(d_v1_and_v2, healthy_AvC_dm_genes, by.x="GeneSymbol", by.y="gene", all.x=T)
+```
+
+
+# STRING-DB interactions of consistent hyper/hypomethylated genes
+
+Consistent genes between ESGIv1 and ESGIv2 which are not DM in the same direction in healthy antrum vs. corpus samples (controls of antrum IM samples are often taken more towards the corpus) are selected. 
+
+```{r}
+hypo_in_IM_candidates = subset(d_v1_and_v2_and_healthy, hypo_ESGIv2 > 0 & (is.na(direction_AvC) | direction_AvC=="hyper") & direction_ESGIv1=="hypo" )
+```
+
+```{r, fig.width=14, fig.height=10}
+hypo_mapped <- string_db$map( hypo_in_IM_candidates, "GeneSymbol", removeUnmappedRows = TRUE )
+
+string_db$plot_network( hypo_mapped$STRING_id, required_score=400 )
+```
+
+```{r}
+hyper_in_IM_candidates = subset(d_v1_and_v2_and_healthy, hyper_ESGIv2 > 0 & (is.na(direction_AvC) | direction_AvC=="hypo") & direction_ESGIv1=="hyper" )
+```
+
+```{r, fig.width=14, fig.height=10}
+hyper_mapped <- string_db$map( hyper_in_IM_candidates, "GeneSymbol", removeUnmappedRows = TRUE )
+
+string_db$plot_network( hyper_mapped$STRING_id, required_score=400 )
+```
+
+# MSigDB gene set enrichment 
+
+```{r, fig.height=6}
+metaplasia_dm_genes = list(hyper = hyper_in_IM_candidates$GeneSymbol, hypo = hypo_in_IM_candidates$GeneSymbol)
+
+genesets <- msigdb_gsets("Homo sapiens", "C2", "CP:KEGG", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.2, top=40, title="C2:CP:KEGG")
+
+genesets <- msigdb_gsets("Homo sapiens", "C2", "CP:REACTOME", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.2, top=40, title="C2:CP:REACTOME")
+
+
+genesets <- msigdb_gsets("Homo sapiens", "C2", "CGP", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.2, top=40, title="CGP")
+
+
+genesets <- msigdb_gsets("Homo sapiens", "C3", "TFT:TFT_Legacy", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.1, top=40, title="C3:TFT_Legacy")
+
+genesets <- msigdb_gsets("Homo sapiens", "C3", "TFT:GTRD", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.2, top=40, title="C3:TFT:GTRD")
+
+genesets <- msigdb_gsets("Homo sapiens", "C5", "GO:BP", clean=TRUE)
+mhyp <- hypeR(metaplasia_dm_genes, genesets, test="hypergeometric", background=36000)
+hyp_dots(mhyp, merge=TRUE, fdr=0.2, top=40, title="GO:BP")
+```
+
+
+# Differential expression of DM genes
+
+```{r}
+dge_env = new.env()
+load("../phenotyping_v2/DGE_analysis_HISAT_featureCounts/Results/2020-07-06/DGE_analysis_image.Rdata", dge_env)
+
+fpkm_mat = get("fpkm_mat", dge_env)
+gene_anno = get("gene_anno",dge_env)
+
+ed_dge = get("ed", dge_env)
+ed_dge$sample_group = ifelse(ed_dge$Condition == "Normal Antrum", "Normal Antrum", paste0(ed_dge$Condition, "_", ed_dge$Patient))
+ed_dge$sample_group = factor(ed_dge$sample_group, levels=unique(sort(ed_dge$sample_group)))
+
+data_esgiv2 = list(emat = fpkm_mat, anno = gene_anno, sample_description = ed_dge)
+
+```
+
+```{r}
+mb119_env = new.env()
+load("/data_genome2/projects/MB119_Methylation/analysis/MB119-F004_Stomach_Gene_Expression/Preprocessing,QC,and_DE/NE_with_avergage.RData", mb119_env)
+
+tmp = get("tmp", mb119_env)
+tmp_mat = as.matrix(tmp[, 1:18])
+
+# probe annotation must include gene symbol, probe ID and optionally a transcript ID
+tmp_anno = as.data.frame(lapply(tmp[, c("GeneSymbol","GeneDescription","EntrezID")], as.character), stringsAsFactors=F) 
+tmp_anno$PROBE_ID = rownames(tmp)
+colnames(tmp_anno) = gsub("GeneSymbol","SYMBOL",colnames(tmp_anno))
+tmp_anno$TX_ID=""
+rownames(tmp_anno) = tmp_anno$PROBE_ID
+
+# sample annotation must include sample ID and stomach site
+tmp_ed = data.frame(SampleID=colnames(tmp_mat), stringsAsFactors = F)
+tmp2 = strsplit(tmp_ed$SampleID, "-")
+tmp_ed$Patient = unlist(sapply(tmp2, `[`,1))
+tmp_ed$Site_and_Condition = unlist(sapply(tmp2, `[`,2))
+tmp_ed$Site = ifelse(substr(tmp_ed$Site_and_Condition,1,1)=="A","Antrum",ifelse(substr(tmp_ed$Site_and_Condition,1,1)=="C","Corpus","Fundus"))
+tmp_ed$Condition = ifelse(substr(tmp_ed$Site_and_Condition, 2,2)=="D", "W-R-","W+R+")
+tmp_ed$Cohort = paste0("MB119, ",tmp_ed$Condition)
+sel_samples = tmp_ed
+
+data_mb119 = list(emat = tmp_mat[, sel_samples$SampleID], anno = tmp_anno[, c("SYMBOL","PROBE_ID","TX_ID")], sample_description=sel_samples[, c("SampleID","Site","Cohort")])
+
+site_levels_ordered = c("Antrum","Corpus","Fundus")
+
+extract_table_ts <- function(ds,sel_genes) {
+  emat = ds[["emat"]]
+  anno = ds[["anno"]]
+  ed = ds[["sample_description"]]
+  
+  sel_probes = subset(anno, SYMBOL %in% sel_genes)
+
+  emat_sel = emat[sel_probes$PROBE_ID,order(ed[colnames(emat),]$Site), drop=F]
+
+  emat_ts = reshape2::melt(emat_sel, stringsAsFactors=F)
+  colnames(emat_ts) = c("PROBE_ID","SampleID","Expression")
+  emat_ts$PROBE_ID = as.character(emat_ts$PROBE_ID)
+  emat_ts$SampleID = as.character(emat_ts$SampleID)
+  emat_ts = merge(emat_ts, ed, by="SampleID", sort=F)
+  emat_ts$Site = gsub("Body","Corpus", emat_ts$Site)
+  emat_ts$Site = paste0(toupper(substr(emat_ts$Site,1,1)),substr(emat_ts$Site,2,nchar(emat_ts$Site)))
+  emat_ts = merge(emat_ts, anno, by="PROBE_ID", all.x=T, sort=F)
+  
+  return(emat_ts)
+  
+}
+```
+
+## Hypermethylated in IM genes
+
+```{r, fig.width=12, fig.height=4}
+sel_genes = hyper_in_IM_candidates$GeneSymbol
+par(mfrow=c(2,2))
+for (g in sel_genes) {
+  gi = subset(gene_anno, GeneSymbol == g)$Geneid
+  if(length(gi)==0) next
+  ge = fpkm_mat[gi, ]
+  group = ed_dge[names(ge),"sample_group"]
+  col = ed_dge[names(ge), "Condition"]
+  d_esgiv2 = data.frame(expr = ge, group=group, col=col)
+  #boxplot(ge ~ group, main=g, las=2, xlab="", ylab="FPKM", col=as.numeric(factor(col)))
+  p1 = ggplot(d_esgiv2, aes(x=group, fill=col, y=expr)) + geom_boxplot() + xlab("Expr [FPKM]") + ggtitle(g) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  d_MB119 = extract_table_ts(data_mb119, g)
+  p2 = ggplot(d_MB119, aes(x=Site, y=Expression, fill=Cohort)) + geom_boxplot() + facet_grid(~ PROBE_ID) + ggtitle(g) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + geom_point()
+  print(plot_grid(p1,p2,nrow = 1, ncol=2))
+
+}
+```
+
+## Hypomethylated in IM genes
+
+```{r, fig.width=12, fig.height=4}
+sel_genes = hypo_in_IM_candidates$GeneSymbol
+par(mfrow=c(2,2))
+for (g in sel_genes) {
+  gi = subset(gene_anno, GeneSymbol == g)$Geneid
+  if(length(gi)==0) next
+  ge = fpkm_mat[gi, ]
+  group = ed_dge[names(ge),"sample_group"]
+  col = ed_dge[names(ge), "Condition"]
+ d_esgiv2 = data.frame(expr = ge, group=group, col=col)
+  #boxplot(ge ~ group, main=g, las=2, xlab="", ylab="FPKM", col=as.numeric(factor(col)))
+  p1 = ggplot(d_esgiv2, aes(x=group, fill=col, y=expr)) + geom_boxplot() + xlab("Expr [FPKM]") + ggtitle(g) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  d_MB119 = extract_table_ts(data_mb119, g)
+  p2 = ggplot(d_MB119, aes(x=Site, y=Expression, fill=Cohort)) + geom_boxplot() + facet_grid(~ PROBE_ID) + ggtitle(g) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + geom_point()
+  print(plot_grid(p1,p2,nrow = 1, ncol=2))
+}
+```

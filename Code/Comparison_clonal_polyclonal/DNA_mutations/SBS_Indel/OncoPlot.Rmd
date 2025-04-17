@@ -1,0 +1,632 @@
+---
+title: "Analysis ESGI v2 Exome Sequencing, hg38 Mutect2 calls - SNV/InDel Overview"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, message=FALSE}
+rm(list=ls())
+library(GenomicRanges)
+library(IRanges)
+library(reshape2)
+library(gplots)
+library(pheatmap)
+library(data.table)
+library(GenomicFeatures)
+library(readxl)
+library(VariantAnnotation)
+library(ggplot2)
+library(naturalsort)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(gridExtra)
+library(maftools)
+
+library(knitr)
+
+result_folder <- "../../../../Results/DNA_combined"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+```
+
+# Data set 
+
+Somatic mutations from exome sequencing data of both mice analyzed in MB208 up to now are analyzed here. 
+
+```{r}
+load("../../../../Data/Processed/ClonalCultures/DNA/hg38/ESGI_v2_Exome_Mutect2_hg38_Calls.Rdata")
+all_variants$varID = paste(seqnames(all_variants),":",start(all_variants),"_",all_variants$REF,"/",unstrsplit(CharacterList(all_variants$ALT),sep = ","),sep="")
+
+all_variants = all_variants[all_variants$sampleID != "4447_Q"] # sample with wrong patient assignation; also duplicate of 4447_F; both share the same clone-id 4A-2
+
+all_variants$AF_rel = all_variants$AC / all_variants$DP
+
+standard_chroms = standardChromosomes(all_variants)
+standard_chroms = standard_chroms[!standard_chroms == "chrM"]
+all_variants = all_variants[seqnames(all_variants) %in% standard_chroms]
+
+anno_unique_sites_highest_impact[, varID := paste(CHROM,":",POS,"_",REF,"/",ALT,sep="")]
+setkey(anno_unique_sites_highest_impact, varID)
+
+
+ed = as.data.frame(read_excel("../../../../Data/Metadata/ClonalCultures/SampleDescription.xlsx", sheet = "DNA"), stringsAsFactors=F)
+rownames(ed) = ed$DNA_ID
+ed$SampleDesc = ed$SampleName
+ed$SampleLabel = paste0(ed$SampleName, "_", ed$CloneID)
+#tmp = strsplit(ed$SampleName," ")
+#ed$Patient = unlist(sapply(tmp, `[`,AP11))
+#ed$Condition = unlist(sapply(tmp, `[`,2))
+ed <- subset(ed, DNA_ID %in% unique(all_variants$sampleID))
+ed$not_first <- duplicated(ed$SampleDesc)
+
+mcols(all_variants) = merge(mcols(all_variants), ed[, c("DNA_ID","SampleDesc","SampleLabel","Patient","Condition")], by.x="sampleID", by.y="DNA_ID", all.x=T, sort=F)
+
+# keep only variants that are found in all technical replicates
+tmp <- mcols(all_variants) |> as.data.table()
+tmp[, sample_count_total:=.N, by=c("varID")]
+tmp[, sample_count_sample_source:=.N, by=c("varID","SampleDesc")]
+
+sample_source_cnts <- table(ed$SampleDesc)
+tmp[, sample_source_cnt:=sample_source_cnts[SampleDesc]]
+tmp$var_and_sampleID = paste0(tmp$varID, "__",tmp$sampleID)
+setkey(tmp, "var_and_sampleID")
+
+all_variants$var_and_sampleID = paste0(all_variants$varID, "__", all_variants$sampleID)
+all_variants$sample_count_per_source <- tmp[all_variants$var_and_sampleID]$sample_count_sample_source
+all_variants$tech_rep_count <- tmp[all_variants$var_and_sampleID]$sample_source_cnt
+
+all_variants <- all_variants[all_variants$sample_count_per_source==all_variants$tech_rep_count]
+
+mcols(all_variants)[["sample_count_per_source"]] <- NULL
+mcols(all_variants)[["tech_rep_count"]] <- NULL
+mcols(all_variants)[["var_and_sampleID"]] <- NULL
+
+tt = table(names(all_variants))
+sample_count = as.integer(tt)
+names(sample_count) = names(tt)
+
+all_variants$sample_count = integer(length(all_variants))
+all_variants$sample_count = sample_count[names(all_variants)]
+
+all_variants_cc <- all_variants
+anno_unique_sites_highest_impact_cc <- anno_unique_sites_highest_impact
+```
+
+```{r}
+sel_samples <- subset(ed, !not_first)$DNA_ID
+all_variants_cc <- all_variants_cc[all_variants_cc$sampleID %in% sel_samples]
+```
+
+
+```{r}
+all_variants_filtered_cc = all_variants_cc[all_variants_cc$DP < 200 & all_variants_cc$AF_rel > 0.25]
+all_variants_filtered_cc_snv = all_variants_filtered_cc[all_variants_filtered_cc$vartype=="SNV"]
+all_variants_filtered_cc_indel = all_variants_filtered_cc[all_variants_filtered_cc$vartype=="Indel"]
+```
+
+
+```{r}
+
+# known SNP  (dbSNP-ID but no ClinVarID) or variant with > 1% AF (if known)
+anno_unique_sites_highest_impact_cc$known_snp = with(anno_unique_sites_highest_impact_cc, ((!is.na(avsnp150) & is.na(CLNALLELEID)) | (is.na(avsnp150) & (!is.na(AF) & AF > 0.01)  ) ) ) 
+
+anno_unique_sites_highest_impact_cc$known_clin_snp = with(anno_unique_sites_highest_impact_cc, (!is.na(CLNALLELEID) & !(CLNSIG %in% c("Benign","Benign/Likely_benign","Likely_benign"))  ) | !is.na(cosmic70)  )
+
+anno_unique_sites_highest_impact_cc$known_bening_clin_snp = with(anno_unique_sites_highest_impact_cc, (!is.na(CLNALLELEID) & (CLNSIG %in% c("Benign","Benign/Likely_benign","Likely_benign"))  ) )
+
+
+# Scores: CADD -> https://cadd.gs.washington.edu/, REVEL: https://doi.org/10.1016/j.ajhg.2016.08.016, GERP++: info from ANNOVAR website
+anno_unique_sites_highest_impact_cc$deleterious_variant = with(anno_unique_sites_highest_impact_cc, (!is.na(CADD_phred) & CADD_phred > 20 ) |  (!is.na(anno_unique_sites_highest_impact_cc$`GERP++_RS`) & anno_unique_sites_highest_impact_cc$`GERP++_RS`>2) | (!is.na(REVEL_score) & REVEL_score > 0.5)  | (!is.na(MetaLR_pred) & MetaLR_pred=="D")  ) 
+
+
+all_variants_filtered_annotated_cc = merge(all_variants_filtered_cc, as.data.frame(anno_unique_sites_highest_impact_cc), by.x="varID", by.y="varID", all.x=T)
+```
+
+
+```{r}
+load("../../../../Data/Processed/PolyclonalCultures/WES/VariantCalls/ZZ_IM_Exome_Mutect2_hg38_Calls.Rdata")
+all_variants$varID = paste(seqnames(all_variants),":",start(all_variants),"_",all_variants$REF,"/",unstrsplit(CharacterList(all_variants$ALT),sep = ","),sep="")
+
+all_variants$AF_rel = all_variants$AC / all_variants$DP
+
+standard_chroms = standardChromosomes(all_variants)
+standard_chroms = standard_chroms[!standard_chroms == "chrM"]
+all_variants = all_variants[seqnames(all_variants) %in% standard_chroms]
+
+anno_unique_sites_highest_impact[, varID := paste(CHROM,":",POS,"_",REF,"/",ALT,sep="")]
+setkey(anno_unique_sites_highest_impact, varID)
+
+
+ed = as.data.frame(read_excel("../../../../Data/Metadata/PolyclonalCultures/SampleDescription.xlsx", sheet = 1), stringsAsFactors=F)
+rownames(ed) = ifelse(is.na(ed$DNA_ID), ed$Remark, ed$DNA_ID)
+ed$SampleDesc = ed$Remark
+ed$SampleLabel = ed$Remark
+ed$Patient = gsub("NON ", "", gsub("IM","", gsub("A$|AC$|C$", "", ed$Remark)))
+
+
+mcols(all_variants) = merge(mcols(all_variants), ed[, c("DNA_ID","SampleDesc","SampleLabel","Patient","Condition")], by.x="sampleID", by.y="DNA_ID", all.x=T, sort=F)
+
+tt = table(names(all_variants))
+sample_count = as.integer(tt)
+names(sample_count) = names(tt)
+
+all_variants$sample_count = integer(length(all_variants))
+all_variants$sample_count = sample_count[names(all_variants)]
+
+all_variants_pc <- all_variants
+anno_unique_sites_highest_impact_pc <- anno_unique_sites_highest_impact
+```
+
+```{r}
+# known SNP  (dbSNP-ID but no ClinVarID) or variant with > 1% AF (if known)
+anno_unique_sites_highest_impact_pc$known_snp = with(anno_unique_sites_highest_impact_pc, ((!is.na(avsnp150) & is.na(CLNALLELEID)) | (is.na(avsnp150) & (!is.na(AF) & AF > 0.01)  ) ) ) 
+
+anno_unique_sites_highest_impact_pc$known_clin_snp = with(anno_unique_sites_highest_impact_pc, (!is.na(CLNALLELEID) & !(CLNSIG %in% c("Benign","Benign/Likely_benign","Likely_benign"))  ) | !is.na(cosmic70)  )
+
+anno_unique_sites_highest_impact_pc$known_bening_clin_snp = with(anno_unique_sites_highest_impact_pc, (!is.na(CLNALLELEID) & (CLNSIG %in% c("Benign","Benign/Likely_benign","Likely_benign"))  ) )
+
+
+# Scores: CADD -> https://cadd.gs.washington.edu/, REVEL: https://doi.org/10.1016/j.ajhg.2016.08.016, GERP++: info from ANNOVAR website
+anno_unique_sites_highest_impact_pc$deleterious_variant = with(anno_unique_sites_highest_impact_pc, (!is.na(CADD_phred) & CADD_phred > 20 ) |  (!is.na(anno_unique_sites_highest_impact_pc$`GERP++_RS`) & anno_unique_sites_highest_impact_pc$`GERP++_RS`>2) | (!is.na(REVEL_score) & REVEL_score > 0.5)  | (!is.na(MetaLR_pred) & MetaLR_pred=="D")  ) 
+
+
+```
+
+```{r}
+setkey(anno_unique_sites_highest_impact_pc, "varID")
+af_eas <- anno_unique_sites_highest_impact_pc[names(all_variants_pc)]$AF_eas
+all_variants_filtered_pc = all_variants_pc[all_variants_pc$DP < 200 & 
+                                       all_variants_pc$AF_rel > 0.05 & 
+                                       !anno_unique_sites_highest_impact_pc[names(all_variants_pc)]$known_snp & 
+                                       (is.na(af_eas) | af_eas < 0.001) ] 
+all_variants_filtered_pc_snv = all_variants_filtered_pc[all_variants_filtered_pc$vartype=="SNV"]
+all_variants_filtered_pc_indel = all_variants_filtered_pc[all_variants_filtered_pc$vartype=="Indel"]
+```
+
+
+```{r}
+all_variants_filtered_annotated_pc = merge(all_variants_filtered_pc, anno_unique_sites_highest_impact_pc, by.x="varID", by.y="varID", all.x=T)
+```
+
+
+```{r}
+all_variants_filtered_annotated_cc$Cohort <- "CC"
+all_variants_filtered_annotated_pc$Cohort <- "PC"
+shared_cols <- intersect(colnames(all_variants_filtered_annotated_cc),colnames(all_variants_filtered_annotated_pc))
+all_variants_filtered_annotated_combined <- rbind(all_variants_filtered_annotated_cc[, shared_cols], all_variants_filtered_annotated_pc[, shared_cols])
+```
+
+```{r}
+all_variants_filtered_annotated_combined$clin_relevant_flag = with(all_variants_filtered_annotated_combined, (!(known_snp | known_bening_clin_snp)) & (HighestImpact %in% c("HIGH","MODERATE")) & (vartype=="Indel" | deleterious_variant  ) )
+
+#clin_relevant_df  = subset(all_variants_filtered_annotated, clin_relevant_flag)
+#xx = subset(all_variants_filtered_annotated, !clin_relevant_flag)
+
+
+```
+
+
+```{r}
+known_cancer_drivers = as.data.frame(read_xlsx("/home/hilmar/Work/References/genesets/CancerDrivers/Baileys_et_al/mmc1.xlsx", sheet = 2, skip = 3))
+
+kcd_sw = as.data.frame(tapply(known_cancer_drivers$Cancer, known_cancer_drivers$Gene, function(x) paste(sort(x), collapse=",")   ) )
+colnames(kcd_sw) = "Cancers"
+
+intestine_canc_drivers <- rownames(subset(kcd_sw, grepl("COAD|READ|PANCAN|STAD",Cancers)))
+
+all_variants_filtered_annotated_combined$known_cancer_driver <- ifelse(all_variants_filtered_annotated_combined$Gene.refGene %in% intestine_canc_drivers, T,F )
+
+
+```
+
+
+```{r}
+var_class_trans <- c("frameshift deletion"="Frame_Shift_Del","frameshift insertion"="Frame_Shift_Ins","nonframeshift deletion"="In_Frame_Del","nonframeshift insertion"="In_Frame_Ins","nonframeshift substitution","nonsynonymous SNV"="Missense_Mutation","startloss"="Silent","stopgain"="Nonsense_Mutation","synonymous SNV"="Silent","unknown"="Silent")
+
+vars_to_maf <- function(x) {
+
+  tmp <- strsplit(x$AAChange.refGene,";")
+  tmp2 <- strsplit(sapply(tmp, `[`,1),":") 
+  maf_input <- with(x, 
+                    data.frame(Hugo_Symbol = ifelse(Func.refGene == "exonic",sapply(tmp2, `[`,1),"."),
+                               Entrez_Gene_Id = NA,
+                               Center = Cohort,
+                               NCBI_Build = "GRCh38",
+                               Chromosome = seqnames,
+                               Start_Position = start,
+                               End_Position = end,
+                               Strand = "+",
+                               Variant_Classification = var_class_trans[ExonicFunc.refGene],
+                               Variant_Type = ifelse(vartype=="Indel", ifelse(Alt=="-","DEL","INS"), "SNP"),
+                               Reference_Allele = Ref,
+                               Tumor_Seq_Allele1 = Alt,
+                               Tumor_Seq_Allele2 = Alt,
+                               dbSNP_RS = ifelse(is.na(avsnp150), "novel", avsnp150),
+                               Tumor_Sample_Barcode = sampleID,
+                               Matched_Norm_Sample_Barcode = paste0("N_",sampleID),
+                               Match_Norm_Seq_Allele1 = Ref,
+                               Match_Norm_Seq_Allele2 = ".",
+                               Tumor_Validation_Allele1=".",	
+                               Tumor_Validation_Allele2=".",
+                               Match_Norm_Validation_Allele1=".",
+                               Match_Norm_Validation_Allele2=".",
+                               Verification_Status="Unknown",
+                               Validation_Status="Unknown",
+                               Mutation_Status="Somatic",
+                               Sequencing_Phase="X",
+                               Sequence_Source="WES",
+                               Validation_Method=".",
+                               Score=NA,
+                               BAM_file=NA,
+                               Sequencer=".",
+                               TranscriptID= sapply(tmp2, `[`,2),
+                               Exon=sapply(tmp2, `[`,3),
+                               ChromChange=sapply(tmp2, `[`,4),
+                               AAChange = sapply(tmp2, `[`,5),
+                               COSMIC_Codon=".",
+                               COSMIC_Gene=".",
+                               Drug_Target="."
+                    ))
+  clin_dat <- unique(x[, c("sampleID","Patient","Condition","Cohort")])
+  colnames(clin_dat)[1] <- "Tumor_Sample_Barcode"
+  #rownames(clin_dat) <- clin_dat$sampleID
+  maf <- read.maf(maf_input, clinicalData =  clin_dat)
+  return(maf)
+}  
+```
+
+
+```{r}
+maf <- vars_to_maf(all_variants_filtered_annotated_combined)
+
+```
+
+```{r, fig.width=12, fig.height=8}
+oncoplot(maf, clinicalFeatures = c("Condition","Patient","cohort"))
+```
+
+```{r, fig.width=12, fig.height=8}
+oncoplot(maf, genes = c("ARID1A","MUC6","ARID1B","FLG","FAT4","FBXW7","KDM6A","BCORL1","SOX9","PIGR","CCND1","RUNX1","BRAF","APC","TP53"), minMut = 0, removeNonMutated = F)
+```
+
+```{r}
+maf <- vars_to_maf(subset(all_variants_filtered_annotated_combined, deleterious_variant == TRUE) )
+```
+
+```{r, fig.width=12, fig.height=8}
+oncoplot(maf, minMut = 0, removeNonMutated = F)
+```
+
+```{r}
+maf <- vars_to_maf(subset(all_variants_filtered_annotated_combined, known_cancer_driver == TRUE) )
+
+```
+
+```{r, fig.width=12, fig.height=8}
+oncoplot(maf, removeNonMutated = F)
+```
+```{r}
+maf <- vars_to_maf(subset(all_variants_filtered_annotated_combined) )
+
+```
+
+```{r, fig.width=12, fig.height=8}
+oncoplot(maf, removeNonMutated = F, genes = c("ACVR2A","AMER1","ATM","NOTCH2","TP53","SOX9","FBXWL7","ARID1A"), altered = T,
+         clinicalFeatures = c("Condition","Patient","cohort"), legendFontSize = 2, annotationFontSize = 2, drawRowBar = F
+        )
+
+pdf(file.path(result_folder, "Oncoplot_both_cohorts.pdf"), width=12, height = 6)
+oncoplot(maf, removeNonMutated = F, genes = c("ACVR2A","AMER1","ATM","NOTCH2","TP53","SOX9","FBXWL7","ARID1A"), altered = T,
+         clinicalFeatures = c("Condition","Patient","cohort"), legendFontSize = 2, annotationFontSize = 2,
+          drawRowBar = F)
+dev.off()
+```
+
+## Mutations per sample
+
+<!-- ### All variants -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- # ggplot(as.data.frame(mcols(all_variants_filtered)), aes(x=SampleDesc, fill=Condition)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") -->
+<!-- # ggplot(as.data.frame(mcols(all_variants_indels)), aes(x=SampleDesc, fill=Condition)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("InDels") -->
+<!-- tmp = as.data.frame(mcols(all_variants)) -->
+<!-- ggplot(as.data.frame(mcols(all_variants)), aes(x=sampleID, fill=SampleDesc)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") + facet_wrap(~vartype, ncol=1, scales = "free_y") -->
+<!-- ``` -->
+
+
+```{r, fig.width=12, fig.height=4}
+dd = as.data.table(all_variants_filtered_annotated_combined)
+dd_agg = dd[, .(count=.N), by=c("Patient","Condition","Cohort","vartype","sampleID")]
+dd_agg2 = dd_agg[, .(mean=mean(count), sd=sd(count)), by=c("Patient","Condition","Cohort","vartype")]
+
+# ggplot(dd_agg2, aes(x=Patient, fill=Condition, y=count)) + geom_bar(stat="identity", position = position_dodge2()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") + facet_wrap(~vartype, ncol=1, scales = "free_y")
+
+p <- ggplot(dd_agg, aes(x=Patient, col=Condition, y=count)) + 
+  geom_point(position = position_dodge(width = 0.5), size=2) + 
+  theme(axis.text.x = element_text(angle = 0, hjust = .5, size=16),text=element_text(size=18)) + 
+  facet_grid(vartype~Cohort, scales = "free", space = "free_x") + 
+  scale_y_continuous(limits=c(0,NA)) + 
+  labs(title="Somatic SNV / Indel counts per sample", y="Count")
+
+print(p)
+
+pdf(file.path(result_folder, "Mutation_counts.pdf"), width=12, height = 4)
+print(p)
+dev.off()
+```
+
+
+<!-- ## Allelic Frequency -->
+
+<!-- ```{r} -->
+<!-- ggplot(as.data.frame(mcols(all_variants)), aes(x=AF_rel, color=SampleLabel)) + geom_density() -->
+<!-- ``` -->
+
+
+<!-- ### Filtered variants -->
+
+<!-- Excluding variants at sites of very high coverage (probable sites of low mapping confidence) and those with low AF (<0.25). -->
+
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- tmp = as.data.frame(mcols(all_variants_filtered)) -->
+<!-- ggplot(as.data.frame(mcols(all_variants_filtered)), aes(x=sampleID, fill=SampleDesc)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") + facet_wrap(~vartype, ncol=1, scales = "free_y") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- dd = as.data.table(as.data.frame(mcols(all_variants_filtered))) -->
+<!-- dd_agg = dd[, .(count=.N), by=c("Patient","Condition","vartype","sampleID")] -->
+<!-- dd_agg2 = dd_agg[, .(mean=mean(count), sd=sd(count)), by=c("Patient","Condition","vartype")] -->
+
+<!-- # ggplot(dd_agg2, aes(x=Patient, fill=Condition, y=count)) + geom_bar(stat="identity", position = position_dodge2()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") + facet_wrap(~vartype, ncol=1, scales = "free_y") -->
+
+<!-- p <- ggplot(dd_agg, aes(x=Patient, col=Condition, y=count)) +  -->
+<!--   geom_point(position = position_dodge(width = 0.5), size=2) +  -->
+<!--   theme(axis.text.x = element_text(angle = 0, hjust = 1, size=18),text=element_text(size=18)) +  -->
+<!--   facet_wrap(~vartype, ncol=1, scales = "free_y") +  -->
+<!--   scale_y_continuous(limits=c(0,NA)) +  -->
+<!--   labs(title="Somatic SNV / Indel counts per sample", y="Count") -->
+
+<!-- print(p) -->
+
+<!-- p <- ggplot(dd_agg, aes(x=Patient, col=Condition, y=count)) +  -->
+<!--   geom_point(position = position_dodge(width = 0.5), size=2) +  -->
+<!--   theme(axis.text.x = element_text(angle = 0, hjust = 1, size=18),text=element_text(size=18)) +  -->
+<!--   facet_wrap(~vartype, ncol=1, scales = "free_y") +  -->
+<!--   scale_y_continuous(limits=c(0,NA)) +  -->
+<!--   labs(title="Somatic SNV / Indel counts per sample", y="Count") -->
+
+
+
+<!-- ``` -->
+
+
+
+<!-- ## Nucleotide changes  -->
+
+<!-- ```{r} -->
+<!-- gr = all_variants_filtered_snv -->
+<!-- mut_df <- data.frame(Sample = gr$SampleLabel, -->
+<!--   chr = as.character(seqnames(gr)), -->
+<!--   pos = start(gr), -->
+<!--   ref = gr$REF,  -->
+<!--   alt = gr$alt_allele  -->
+<!-- ) -->
+
+<!-- #head(mut_df) -->
+<!-- sigs.input = mut.to.sigs.input(mut_df, sample.id = "Sample", chr="chr", pos="pos", ref="ref", alt="alt", bsg = BSgenome.Hsapiens.UCSC.hg38) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- nuc_changes = apply(sigs.input, 1, function(x) tapply(x, factor(substr(colnames(sigs.input), 3,5)), sum)) -->
+<!-- nuc_changes_ts = melt(nuc_changes) -->
+<!-- colnames(nuc_changes_ts) = c("NucleotideChange", "Sample","Count") -->
+<!-- nuc_changes_ts$Condition = ed[nuc_changes_ts$Sample, "Condition"] -->
+
+<!-- ggplot(nuc_changes_ts, aes(x=Sample, y=Count, fill=NucleotideChange)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1))  -->
+
+<!-- ggplot(nuc_changes_ts, aes(x=Sample, y=Count, fill=NucleotideChange)) + geom_bar(position = "fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent) -->
+
+<!-- ``` -->
+
+
+<!-- ## Trinucleotide changes -->
+
+<!-- ```{r, fig.width=16, fig.height=8} -->
+<!-- row_anno = ed[,c("SampleLabel" ), drop=F] -->
+<!-- rownames(row_anno) = ed$SampleLabel -->
+
+<!-- pheatmap(sigs.input, cluster_cols = F, annotation_row = row_anno) -->
+<!-- ``` -->
+
+
+<!-- <!-- ```{r, fig.width=16, fig.height=8} --> -->
+<!-- <!-- pdf(file="Trinucleotide_changes_heatmap.pdf", width=12, height=6) --> -->
+
+<!-- <!-- pheatmap(sigs.input, cluster_cols = F, cluster_rows=F, fontsize_col = 6) --> -->
+
+<!-- <!-- dev.off() --> -->
+<!-- <!-- ``` --> -->
+
+
+<!-- # Shared variants -->
+
+<!-- ## All shared variants -->
+
+<!-- ```{r} -->
+<!-- table(all_variants_filtered$sample_count) -->
+<!-- ``` -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- var_mat = table(names(all_variants_filtered), all_variants_filtered$SampleLabel) -->
+<!-- pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation") -->
+<!-- ``` -->
+
+<!-- ## Shared SNV -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- var_mat = table(names(all_variants_filtered_snv), all_variants_filtered_snv$SampleLabel) -->
+<!-- pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation") -->
+<!-- ``` -->
+
+
+<!-- ## Shared InDel -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- var_mat = table(names(all_variants_filtered_indel), all_variants_filtered_indel$SampleLabel) -->
+<!-- pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation") -->
+<!-- ``` -->
+
+<!-- # Mutation sites -->
+
+
+
+## Overview
+
+### Annotation Type
+
+```{r}
+nr = elementNROWS(all_variants_filtered_annotated$AnnotationType)
+at_mat = table(unlist(all_variants_filtered_annotated$AnnotationType), rep(all_variants_filtered_annotated$SampleLabel, nr))
+
+
+t(at_mat)
+```
+
+```{r, fig.width=20, fig.height = 8}
+tmp = reshape2::melt(at_mat)
+colnames(tmp) = c("AnnotationType","Sample","Count")
+ggplot(tmp, aes(x=Sample, y=Count, fill=AnnotationType))  + geom_bar(position="fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent)
+
+```
+
+
+### Impact
+
+
+```{r}
+impact_tab_ts = melt(table(all_variants_filtered_annotated$HighestImpact, all_variants_filtered_annotated$sampleID))
+colnames(impact_tab_ts) = c("Impact","Sample","Count")
+impact_tab_ts$Impact = factor(impact_tab_ts$Impact, levels=c("HIGH","MODERATE","LOW","MODIFIER"))
+ggplot(impact_tab_ts, aes(x=Sample, y=Count, fill=Impact))  + geom_bar(position="fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent)
+```
+
+
+# Rainfall plots
+
+```{r, message=FALSE, warning=FALSE}
+ucsc <- function (x) 
+{
+    seqlevelsStyle(x) <- "UCSC"
+    genome(x) = NA
+    return(x)
+}
+
+ncbi <- function (x) 
+{
+    seqlevelsStyle(x) <- "NCBI"
+    genome(x) = NA
+    return(x)
+}
+
+
+gr = all_variants_filtered_snv
+som_vr = VRanges(
+  seqnames = seqnames(gr),
+  ranges = ranges(gr),
+  ref = gr$REF,
+  alt = unstrsplit(CharacterList(gr$ALT),","),
+  sampleNames = gr$SampleLabel,
+  seqinfo = seqinfo(gr))
+som_vr_ucsc = ucsc(som_vr)
+som_vr_ucsc <- keepSeqlevels(som_vr_ucsc, seqlevels(som_vr_ucsc)[1:24])
+vr_motifs = mutationContext(som_vr_ucsc, BSgenome.Hsapiens.UCSC.hg38, unify = TRUE)
+
+```
+
+```{r}
+input = ncbi(vr_motifs)
+#seqinfo(input) = seqinfo(all_region_results_ML)
+samples = sort(unique(sampleNames(input)))
+for(sa in samples) {
+    print(plotRainfall(input[sampleNames(input) ==sa], group="alteration", main=sa))
+}
+```
+
+# Clinically relevant somatic variants
+
+```{r}
+
+
+all_variants_filtered_annotated$clin_relevant_flag = with(all_variants_filtered_annotated, (!(known_snp | known_bening_clin_snp)) & (HighestImpact %in% c("HIGH","MODERATE")) & (vartype=="Indel" | deleterious_variant  ) )
+
+clin_relevant_df  = subset(all_variants_filtered_annotated, clin_relevant_flag)
+#xx = subset(all_variants_filtered_annotated, !clin_relevant_flag)
+
+
+```
+
+```{r}
+samples_per_biopsy = apply(as.matrix(table(all_variants$SampleName, all_variants$sampleID))>0,1,sum)
+var_per_biopsy = reshape2::dcast(clin_relevant_df, varID ~ SampleName, fun.aggregate = function(x) length(x), value.var = "sampleID" )
+
+tmp = sweep(var_per_biopsy[,2:ncol(var_per_biopsy)], 2, samples_per_biopsy[colnames(var_per_biopsy[,2:ncol(var_per_biopsy)])], "/")
+colnames(tmp) = paste0(colnames(tmp),"_proportion")
+tmp$max_prop = apply(tmp, 1, max)
+var_per_biopsy = cbind(var_per_biopsy, tmp)
+
+#var_per_biopsy$max_count = apply(var_per_biopsy[,2:ncol(var_per_biopsy)], 1, max)
+
+shared_vars_within_biopsy = subset(var_per_biopsy, max_prop > 0.6)
+
+
+clin_relevant_shared_within_biopsy = merge(shared_vars_within_biopsy, anno_unique_sites_highest_impact, by.x="varID", by.y="varID", all.x=T)
+
+```
+
+
+
+## Genes mutated in both IM 592 and 594 in at least two samples per biopsy and clinically relevant mutation
+
+```{r}
+clin_relevant_shared_within_biopsy$IM_592_594 = ifelse(clin_relevant_shared_within_biopsy$`592 IM`+ clin_relevant_shared_within_biopsy$`594 IM` >0, T, F)
+clin_relevant_shared_within_biopsy$nonIM_592_594 = ifelse(clin_relevant_shared_within_biopsy$`592 non-IM`+ clin_relevant_shared_within_biopsy$`594 non-IM` >0, T, F)
+
+clin_relevant_shared_within_biopsy$IM_but_not_non_IM_592_594 = (clin_relevant_shared_within_biopsy$IM_592_594 & !clin_relevant_shared_within_biopsy$nonIM_592_594)
+
+clin_relevant_shared_within_biopsy$known_driver = kcd_sw[clin_relevant_shared_within_biopsy$Gene.refGene, "Cancers"]
+
+candidate_mutations_IM_592_594_only = subset(clin_relevant_shared_within_biopsy, IM_but_not_non_IM_592_594)
+rownames(candidate_mutations_IM_592_594_only) = candidate_mutations_IM_592_594_only$varID
+
+tmp = candidate_mutations_IM_592_594_only[, c("varID","Gene.refGene", "HighestImpact","AnnotationType","Func.refGene","ExonicFunc.refGene","AAChange.refGene", "known_driver")]
+
+kable(tmp[order(tmp$Gene.refGene),])
+```
+
+# Status of mutated genes in all clones
+
+```{r}
+clin_variants_filtered = all_variants_filtered[all_variants_filtered$varID %in% candidate_mutations_IM_592_594_only$varID]
+var_mat = table(names(clin_variants_filtered), factor(clin_variants_filtered$SampleLabel, levels=unique(sort(all_variants_filtered$SampleLabel))))
+pheatmap(var_mat, scale="none", show_rownames = TRUE, cluster_cols=F, clustering_distance_rows = "correlation", labels_row = paste0(rownames(var_mat), " - ", candidate_mutations_IM_592_594_only[rownames(var_mat), "Gene.refGene"]))
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

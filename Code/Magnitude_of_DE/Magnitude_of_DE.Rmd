@@ -1,0 +1,410 @@
+---
+title: "Magnitude of DE"
+output: html_document
+date: "2024-10-20"
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(fgsea)
+library(BiocParallel)
+library(robustbase)
+```
+
+
+# What DS we need
+
+  - one reference of in-vivo Colon vs.  Stomach
+  - one reference of in-vivo IM vs. healthy / non-IM
+  - Organoids +WR colon vs.Stomach (van Wetering + Bartfeld / Kayisoglu)
+  - ex-vivo  IM vs. non-IM 
+  - ex-vivo IM vs. healthy stomach
+  - Marker genes of scRNA IM + healthy gut (SI, LI, stomach)
+  
+```{r}
+all_ds = readRDS("../../Data/ExtData/Validation_DataSets/Joint_datasets.rds")
+all_ds <- all_ds[!names(all_ds) %in% c("China_IM_10best","Thorell_atrophy")]
+
+all_ds$Nookaew$dge <- all_ds$Nookaew$dge["Atrophy_vs_NI_Corpus"]
+
+sc_Yue <- readRDS("../../Data/ExtData/Yue_scRNA_IMO/PseudoBulk_DGE_IM_vs_normal.rds")
+
+
+# all_ds[["Yue_scIMO"]] <- list(dge = sc_Yue[c("IM_Wnt_vs_Normal_Wnt","IM_noWnt_vs_Normal_noWnt" )])
+# all_ds[["Yue_scIntestineO"]] <- list(dge = sc_Yue[c("SI_Wnt_vs_Normal_Wnt","SI_noWnt_vs_Normal_noWnt")])
+# all_ds[["Yue_scIM"]] <- list(dge = sc_Yue[c( "IM_Tissue_vs_Normal_Wnt", "IM_Tissue_vs_Normal_noWnt" )])
+all_ds[["Yue_scIMO"]] <- list(dge = sc_Yue[c("IM_noWnt_vs_Normal_noWnt" )])
+all_ds[["Yue_scIntestineO"]] <- list(dge = sc_Yue[c("SI_noWnt_vs_Normal_noWnt")])
+all_ds[["Yue_scIM"]] <- list(dge = sc_Yue[c( "IM_Tissue_vs_Normal_noWnt" )])
+
+```
+
+```{r}
+ds_to_type <- c("Nookaew" = "Atrophy",
+                "Companioni" = "IM",
+                "Kayisoglu_caudal"="LI ex vivo",
+                "Kayisoglu_cranial"="SI ex vivo",
+                "Thorell_atrophy"="Atrophy",
+                "Thorell_ext.atrophy"="Atrophy",
+                "VanDeWetering"="LI ex vivo",
+                "ESGIv2_IM_vs_nonIM" = "IM ex vivo",
+                "ESGIv2_IM_vs_nonIM_2pat" = "IM ex vivo",
+                "China_IM" = "IM ex vivo",
+                "China_SIvsStomach"="SI ex vivo", 
+                "Li_IM"="IM", 
+                "GTEX_SI"="SI",
+                "GTEX_LI"="LI",
+                "Yue_scIMO"="IM ex vivo",
+                "Yue_scIntestineO"="SI ex vivo",
+                "Yue_scIM"="IM")
+```
+
+```{r}
+group_levels <- c("LI","SI","LI ex vivo","SI ex vivo", "IM", "IM ex vivo","Atrophy")
+bar_cols = c("brown","darkred","red","red3","orange","yellow","blue")
+names(bar_cols) <- group_levels
+```
+
+
+Idea: Best way of measuring RNA phenotype change is to look at scRNA derived signatures
+
+```{r}
+#tmp = read_excel("../../../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.xlsx", sheet = 1)
+load("../../Data/ExtData/Zhang_scRNA/All_markers_Epi_with_intestine_BBKNN.Rdata")
+tmp = subset(cluster_markers, p_val_adj < 0.05 & avg_log2FC > 0.5)
+
+sc_sets = split(tmp$gene, tmp$cluster)
+
+```
+
+
+
+
+
+# Number of DE genes from each signature in IM, IM ex vivo and intestine ex vivo data
+
+For each scRNA signatures, loop through all comparisons from that data set. For each data set, assess overlap of up-regulation within genes from the signature. 
+
+```{r, fig.width=8, fig.height=6}
+all_ovlp = list()
+sel_ds = names(all_ds)
+fc_threshold = 0.5
+adj_p_threshold = 0.1
+
+all_ovlp <- list()
+
+for (n in sel_ds) {
+  tmp = all_ds[[n]]
+  
+  comps <- names(tmp$dge)
+  
+  for (cc in comps) {
+    tmp2 <- tmp$dge[[cc]]
+    if("logFC" %in% colnames(tmp2)) {
+      #LIMMA
+      if("SYMBOL" %in% colnames(tmp2)) {
+        r_up = subset(tmp2, adj.P.Val < adj_p_threshold & logFC > fc_threshold & !(SYMBOL=="" | SYMBOL=="NA"))
+        r_down = subset(tmp2, adj.P.Val < adj_p_threshold & logFC < -fc_threshold & !(SYMBOL=="" | SYMBOL=="NA"))
+        gs_col = "SYMBOL"
+      } else {
+        colnames(tmp2) <- gsub("Gene Symbol", "SYMBOL", colnames(tmp2))
+        r_up = subset(tmp2, adj.P.Val < adj_p_threshold & logFC > fc_threshold & !(SYMBOL=="" | SYMBOL=="NA"))
+        r_down = subset(tmp2, adj.P.Val < adj_p_threshold & logFC < -fc_threshold & !(SYMBOL=="" | SYMBOL=="NA"))
+        gs_col = "SYMBOL"
+      }
+    } else {
+      #DESeq2
+      r_up = subset(tmp2, padj < adj_p_threshold & log2FoldChange > fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+      r_down = subset(tmp2, padj < adj_p_threshold & log2FoldChange < -fc_threshold & !(GeneSymbol=="" | GeneSymbol=="NA"))
+      gs_col = "GeneSymbol"
+    }
+    
+    for (gs in names(sc_sets)) {
+      set_genes = sc_sets[[gs]]
+      all_ovlp[[paste0(n,"___",cc,"___UP_",gs)]] = intersect(set_genes, r_up[[gs_col]])  
+      all_ovlp[[paste0(n,"___",cc,"___DOWN_",gs)]] = intersect(set_genes, r_down[[gs_col]])
+    
+    }
+  }
+}
+```
+
+
+## Up-regulated genes in DS that overlap with signature genes
+
+```{r}
+up_res <- all_ovlp[grepl("_UP_", names(all_ovlp))]
+
+tmp <- strsplit(names(up_res), "___")
+res_desc <- data.frame(id = names(up_res), 
+                       ds = sapply(tmp, `[`, 1), 
+                       comp = sapply(tmp, `[`, 2),
+                       celltype = sapply(tmp, `[`, 3) |> gsub("UP_", "", x=_)
+                       )
+res_desc$label <- paste0(res_desc$ds, "_", res_desc$comp)
+res_desc$up_cnts <- up_res[res_desc$id] |> lapply(length) |> unlist()
+
+
+res_desc$ds_type <- ds_to_type[res_desc$ds]
+
+```
+
+```{r, fig.width=8}
+for (ct in unique(res_desc$celltype)) {
+  tmp <- subset(res_desc, celltype == ct)
+  
+  up_cnts <- up_res[tmp$id] |> lapply(length) |> unlist()
+  up_cnts <- sort(up_cnts)
+  group <- tmp[match(names(up_cnts), tmp$id), "ds_type"] |> factor(levels=group_levels)
+  names(up_cnts) <- tmp[match(names(up_cnts), tmp$id), "label"]
+  
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(up_cnts, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols)
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```
+
+
+
+## Down-regulated genes in DS that overlap with signature genes
+
+```{r}
+down_res <- all_ovlp[grepl("_DOWN_", names(all_ovlp))]
+
+tmp <- strsplit(names(down_res), "___")
+res_desc <- data.frame(id = names(down_res), 
+                       ds = sapply(tmp, `[`, 1), 
+                       comp = sapply(tmp, `[`, 2),
+                       celltype = sapply(tmp, `[`, 3) |> gsub("DOWN_", "", x=_)
+                       )
+res_desc$label <- paste0(res_desc$ds, "_", res_desc$comp)
+res_desc$down_cnts <- down_res[res_desc$id] |> lapply(length) |> unlist()
+
+
+res_desc$ds_type <- ds_to_type[res_desc$ds]
+
+```
+
+```{r, fig.width=8}
+for (ct in unique(res_desc$celltype)) {
+  tmp <- subset(res_desc, celltype == ct)
+  
+  down_cnts <- down_res[tmp$id] |> lapply(length) |> unlist()
+  down_cnts <- sort(down_cnts)
+  group <- tmp[match(names(down_cnts), tmp$id), "ds_type"] |> factor(levels=group_levels)
+  names(down_cnts) <- tmp[match(names(down_cnts), tmp$id), "label"]
+  
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(down_cnts, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols)
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```
+
+# Mean and median signature log2FC
+
+
+```{r, fig.width=8, fig.height=6}
+all_ovlp = list()
+sel_ds = names(all_ds)
+fc_threshold = 0.5
+adj_p_threshold = 0.1
+
+all_mean_lfc <- list()
+all_median_lfc <- list()
+all_huberM <- list()
+
+for (n in sel_ds) {
+  tmp = all_ds[[n]]
+  
+  comps <- names(tmp$dge)
+  
+  for (cc in comps) {
+    tmp2 <- tmp$dge[[cc]]
+    
+    if("logFC" %in% colnames(tmp2)) {
+      #DESeq2
+      lfc_col <- "logFC"
+      if("SYMBOL" %in% colnames(tmp2)) {
+        gs_col = "SYMBOL"
+      } else {
+        gs_col = "Gene Symbol"
+      }
+    } else {
+      #LIMMA
+      lfc_col <- "log2FoldChange"
+      gs_col = "GeneSymbol"
+    }
+
+    for (gs in names(sc_sets)) {
+      set_genes = sc_sets[[gs]]
+      set_gene_agg_lfc <- tmp2[match(set_genes, tmp2[[gs_col]]), lfc_col ]
+      
+      all_mean_lfc[[paste0(n,"___",cc,"___",gs)]] = mean(set_gene_agg_lfc, na.rm=T)
+      all_median_lfc[[paste0(n,"___",cc,"___",gs)]] = median(set_gene_agg_lfc, na.rm=T)
+      all_huberM[[paste0(n,"___",cc,"___",gs)]] = huberM(set_gene_agg_lfc)$mu
+    }
+  }
+}
+```
+
+```{r}
+lfc_res <- all_mean_lfc
+
+tmp <- strsplit(names(lfc_res), "___")
+res_desc <- data.frame(id = names(lfc_res), 
+                       ds = sapply(tmp, `[`, 1), 
+                       comp = sapply(tmp, `[`, 2),
+                       celltype = sapply(tmp, `[`, 3) |> gsub("UP_", "", x=_)
+                       )
+res_desc$label <- paste0(res_desc$ds, "_", res_desc$comp)
+res_desc$mean_lfc <- all_mean_lfc[res_desc$id] |> unlist()
+res_desc$median_lfc <- all_median_lfc[res_desc$id] |> unlist()
+res_desc$huberM_lfc <- all_huberM[res_desc$id] |> unlist()
+
+
+res_desc$ds_type <- ds_to_type[res_desc$ds]
+
+```
+
+
+
+## Mean logFC
+
+
+```{r, fig.width=8}
+for (ct in unique(res_desc$celltype)) {
+  tmp <- subset(res_desc, celltype == ct)
+  tmp <- tmp[order(tmp$mean_lfc, decreasing = F),]
+  
+  group <- tmp$ds_type |> factor(levels=group_levels)
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(tmp$mean_lfc, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols, xlab = "Mean log2FC")
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```
+
+
+## HuberM logFC
+
+
+```{r, fig.width=8}
+for (ct in unique(res_desc$celltype)) {
+  tmp <- subset(res_desc, celltype == ct)
+  tmp <- tmp[order(tmp$mean_lfc, decreasing = F),]
+  
+  group <- tmp$ds_type |> factor(levels=group_levels)
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(tmp$huberM_lfc, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols, xlab = "Mean log2FC")
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```
+
+
+```{r, fig.width=24}
+res_desc$ds_type <- factor(res_desc$ds_type, levels=group_levels)
+ggplot(res_desc, aes(x=ds_type, fill=label, y=huberM_lfc)) + geom_bar(stat="identity", position = position_dodge()) + facet_wrap(~celltype, scales="free_y")
+
+ggplot(res_desc, aes(x=ds_type, fill=label, col=label, y=huberM_lfc)) + geom_point() + stat_summary(aes(group=ds_type), fun.data = function(x) mean_se(x, mult = 2)) + facet_wrap(~celltype, scales="free_y")
+
+
+# 
+# for (ct in unique(res_desc$celltype)) {
+#   tmp <- subset(res_desc, celltype == ct)
+#   tmp <- tmp[order(tmp$mean_lfc, decreasing = F),]
+#   
+#   group <- tmp$ds_type |> factor(levels=group_levels)
+#   cols = bar_cols[as.character(group)]
+#   par(mar=c(5,20,4,1))
+#   barplot(tmp$huberM_lfc, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols, xlab = "Mean log2FC")
+#   legend("bottomright", legend=levels(group), fill=bar_cols)
+# }
+```
+
+## Median logFC
+
+```{r, fig.width=8}
+for (ct in unique(res_desc$celltype)) {
+  tmp <- subset(res_desc, celltype == ct)
+  tmp <- tmp[order(tmp$mean_lfc, decreasing = F),]
+  
+  group <- tmp$ds_type |> factor(levels=group_levels)
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(tmp$median_lfc, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = cols, xlab = "Median log2FC")
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```
+
+
+
+# GSEA
+
+```{r, fig.width=8, fig.height=6}
+all_gsea = list()
+sel_ds = names(all_ds)
+fc_threshold = 0.5
+adj_p_threshold = 0.1
+
+bpparam = MulticoreParam(worker=8, manager.hostname="127.0.0.1")
+
+for (n in sel_ds) {
+  tmp = all_ds[[n]]
+  
+  comps <- names(tmp$dge)
+  
+  for (cc in comps) {
+    tmp2 <- tmp$dge[[cc]]
+    
+    if("logFC" %in% colnames(tmp2)) {
+      #DESeq2
+      lfc_col <- "logFC"
+      if("SYMBOL" %in% colnames(tmp2)) {
+        gs_col = "SYMBOL"
+      } else {
+        gs_col = "Gene Symbol"
+      }
+    } else {
+      #LIMMA
+      lfc_col <- "log2FoldChange"
+      gs_col = "GeneSymbol"
+    }
+
+    
+    tmp3 <- tmp2[!is.na(tmp2[[gs_col]]) & !tmp2[[gs_col]] %in% c("","---") & !is.na(tmp2[[lfc_col]]),]
+    
+    tmp3[[lfc_col]] <- ifelse(is.infinite(tmp3[[lfc_col]]), sign(tmp3[[lfc_col]]) * 10, tmp3[[lfc_col]])
+    
+    ranks <- unlist(tapply(tmp3[[lfc_col]], as.character(tmp3[[gs_col]]), function(x) x[which(abs(x)==max(abs(x), na.rm=T))] ))
+    
+    fgseaRes <- fgsea(sc_sets, ranks, minSize=10, maxSize=2000, BPPARAM=bpparam)
+    fgseaRes$ds <- n
+    fgseaRes$comparison <- cc
+    all_gsea[[paste0(n,"___",cc,"___",gs)]] <- fgseaRes
+  }
+}
+```
+
+```{r}
+all_gsea_df <- do.call(rbind, all_gsea)
+all_gsea_df$ds_type <- ds_to_type[all_gsea_df$ds]
+all_gsea_df$label <- paste0(all_gsea_df$ds, "_", all_gsea_df$comparison)
+```
+
+
+```{r, fig.width=8}
+for (ct in unique(all_gsea_df$pathway)) {
+  tmp <- subset(all_gsea_df, pathway == ct)
+  tmp <- tmp[order(tmp$NES, decreasing = F),]
+  
+  group <- tmp$ds_type |> factor(levels=group_levels)
+  cols = bar_cols[as.character(group)]
+  par(mar=c(5,20,4,1))
+  barplot(tmp$NES, names.arg = tmp$label, horiz=T, main=ct, las=2, cex.names = 0.8, col = ifelse(tmp$padj < 0.05, cols, "grey80"), xlab = "NES")
+  legend("bottomright", legend=levels(group), fill=bar_cols)
+}
+```

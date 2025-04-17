@@ -1,0 +1,108 @@
+---
+title: "MB044 WXS ESGI - FASTQC overview"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+# DNA Sequences
+
+Note: the data was provided in several parts for each sample. Each part seems to stem from the same flowcell and lane and will be referred to as **replicate** in this document. 
+
+## Read count overview (raw sequences)
+
+The target data amount per is about 3e7 reads (R1+R2, 60 fold coverage across 60Mb human exome with 80% of reads in targeted regions). 
+
+```{r, message=FALSE}
+library(naturalsort)
+library(ggplot2)
+
+input_folder_total_counts = "../../../seqs/DNA/"
+input_folder_FASTQC = "."
+
+read_cnts_raw = read.table(file.path(input_folder_total_counts,"MB044_WXS_DNA_count_table.txt"),sep="\t",header=F, as.is=T, colClasses=c(rep("character",7), "integer") )
+colnames(read_cnts_raw) = c("sample","run","index","sample_id","lane","mate_end","replicate","count")
+read_cnts_raw = read_cnts_raw[order(read_cnts_raw$run, read_cnts_raw$lane),]
+read_cnts_raw$run_lane = factor(paste(read_cnts_raw$run, read_cnts_raw$lane))
+read_cnts_raw$sample_id_orig = gsub(" ", "", with(read_cnts_raw, paste(sample, run, index,sample_id, lane, mate_end, replicate, sep="_")))
+
+read_cnts_raw$sample_id =  read_cnts_raw$sample_id_orig
+```
+
+```{r, fig.width=6, fig.height=6}
+ggplot(read_cnts_raw, aes(x=mate_end,y=count, fill=replicate)) + geom_bar(stat="identity") + facet_wrap(~sample) + labs(title="All runs")
+```
+
+## FASTQC: Median, Lower quartile (Q1) and 10th percentile (P10) of base quality across samples, runs and lanes
+
+```{r, fig.width=10, fig.height=10}
+fastqc_per_base_qual = read.table(paste(input_folder_FASTQC,"fastq_summary_Per_base_sequence_quality.txt",sep="/"), sep="\t",header=T)
+fastqc_per_base_qual$sample_id=gsub("./","",gsub("_fastqc","",fastqc_per_base_qual$File))
+fastqc_per_base_qual = merge(fastqc_per_base_qual, read_cnts_raw, by="sample_id", all.x=T)
+fastqc_per_base_qual$base_natsort = factor(fastqc_per_base_qual$Base, levels=naturalsort(levels(fastqc_per_base_qual$Base)))
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_base_qual, aes(x=base_natsort,y=Median, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Base position in read") + ylab("Median base quality score") + theme(axis.text.x=element_text(angle=90, hjust = 1)) + guides(colour = guide_legend(override.aes = list(size=3))) + scale_y_continuous(limits=c(0,45))
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_base_qual, aes(x=base_natsort,y=Lower.Quartile, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Base position in read") + ylab("Q1 base quality score") + theme(axis.text.x=element_text(angle=90, hjust = 1)) + guides(colour = guide_legend(override.aes = list(size=3))) + scale_y_continuous(limits=c(0,45))
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_base_qual, aes(x=base_natsort,y=X10th.Percentile, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Base position in read") + ylab("P10 base quality score") + theme(axis.text.x=element_text(angle=90, hjust = 1)) + guides(colour = guide_legend(override.aes = list(size=3))) + scale_y_continuous(limits=c(0,45))
+```
+
+
+## FASTQC: N content across samples, runs and lanes
+
+```{r, fig.width=14, fig.height=10}
+fastqc_per_base_n = read.table(paste(input_folder_FASTQC,"fastq_summary_Per_base_N_content.txt",sep="/"),sep="\t",header=T)
+fastqc_per_base_n$sample_id=gsub("./","",gsub("_fastqc","",fastqc_per_base_n$File))
+fastqc_per_base_n = merge(fastqc_per_base_n, read_cnts_raw, by="sample_id", all.x=T)
+fastqc_per_base_n$base_natsort = factor(fastqc_per_base_n$Base, levels=naturalsort(levels(fastqc_per_base_n$Base)))
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_base_n, aes(x=base_natsort,y=N.Count, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Base position in read") + ylab("Percentage of N per position") + theme(axis.text.x=element_text(angle=90, hjust = 1)) + guides(colour = guide_legend(override.aes = list(size=3)))  + scale_y_continuous(limits=c(0,0.1))
+```
+
+
+## FASTQC: Sequence quality score across samples, runs and lanes
+
+```{r, fig.width=14, fig.height=10}
+fastqc_per_seq_qual = read.table(paste(input_folder_FASTQC,"fastq_summary_Per_sequence_quality_scores.txt",sep="/"),sep="\t",header=T)
+fastqc_per_seq_qual$sample_id=gsub("./","",gsub("_fastqc","",fastqc_per_seq_qual$File))
+fastqc_per_seq_qual = merge(fastqc_per_seq_qual, read_cnts_raw, by="sample_id", all.x=T)
+fastqc_per_seq_qual$proportion  = fastqc_per_seq_qual$Count / fastqc_per_seq_qual$count # count per qual / total count per file
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_seq_qual, aes(x=Quality,y=proportion, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Sequence quality score") + ylab("Proportion of all reads") + guides(colour = guide_legend(override.aes = list(size=3))) + scale_y_continuous(limits=c(0,1))
+```
+
+## FASTQC: Per sequence GC content across samples, runs and lanes
+
+```{r, fig.width=14, fig.height=10}
+fastqc_per_seq_GC = read.table(paste(input_folder_FASTQC,"fastq_summary_Per_sequence_GC_content.txt",sep="/"),sep="\t",header=T)
+fastqc_per_seq_GC$sample_id=gsub("./","",gsub("_fastqc","",fastqc_per_seq_GC$File))
+fastqc_per_seq_GC = merge(fastqc_per_seq_GC, read_cnts_raw, by="sample_id", all.x=T)
+fastqc_per_seq_GC$proportion  = fastqc_per_seq_GC$Count / fastqc_per_seq_GC$count # count per qual / total count per file
+```
+
+```{r, fig.width=14, fig.height=10}
+ggplot(fastqc_per_seq_GC, aes(x=GC.Content,y=proportion, group=sample_id, color=replicate)) + geom_line() + facet_grid(sample ~ mate_end) + xlab("Sequence GC content (%)") + ylab("Proportion of all reads") + guides(colour = guide_legend(override.aes = list(size=3))) + scale_y_continuous(limits=c(0,0.1))
+```
+
+

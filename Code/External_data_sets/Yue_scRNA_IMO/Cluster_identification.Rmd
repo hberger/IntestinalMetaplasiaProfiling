@@ -1,0 +1,402 @@
+---
+title: "Cluster identification, Yue et al IMO"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, message=FALSE}
+rm(list=ls())
+library(Seurat)
+library(ggplot2)
+
+library(readxl)
+library(writexl)
+library(knitr)
+library(data.table)
+library(cowplot)
+
+library(pheatmap)
+
+
+library(future)
+options(future.globals.maxSize=10*2**32)
+plan("multisession", workers = 8)
+
+source("../../Utils/Dotplot_scRNA_v2.2.R")
+
+result_folder = "../../../../Results/Yue_scRNA_IMO/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../Data/ExtData/Yue_scRNA_IMO"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+rerun_analyses = F
+```
+
+```{r}
+scData.combined <- readRDS(file.path(data_storage_folder, "Yue_IMO_Harmony.rds"))
+```
+
+# Cluster overview
+
+```{r, fig.width=8, fig.height=6}
+DimPlot(scData.combined, reduction = "umap", label = TRUE)
+```
+
+```{r, fig.width=20, fig.height=8}
+DimPlot(scData.combined, reduction = "umap", split.by = "Condition", label = T, ncol = 4)
+```
+
+
+```{r}
+m = table(scData.combined$seurat_clusters, scData.combined$Condition, useNA = "no")
+print(m)
+```
+
+
+```{r, fig.height=8}
+mm = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+
+mr = sweep(mm, 2, apply(mm, 2, sum), "/")
+
+pheatmap(mr, cluster_cols=T, cluster_rows=F, main = "Proportion of cells in condition falling in clusters")
+```
+
+# Cluster markers
+
+```{r}
+#Stomach_markers <- FindAllMarkers(object = scData.combined, only.pos = TRUE, min.pct = 0.6, min.diff.pct = 0.3, thresh.use = 0.3, test.use = "roc")
+if(rerun_analyses) {
+  cluster_markers <- FindAllMarkers(object = scData.combined, only.pos = FALSE, assay = "RNA")
+  save(cluster_markers, file=file.path(data_storage_folder, "All_markers_Yue_all_cells.Rdata"))
+  write_xlsx(cluster_markers,file.path(result_folder, "All_markers_Yue_all_cells.xlsx"))
+} else {
+  load(file.path(data_storage_folder, "All_markers_Yue_all_cells.Rdata"))
+}
+```
+
+
+```{r}
+plot_top_genes <- function(dge_results_all, title) {
+  for (n in sort(unique(dge_results_all$cluster))) {
+    tmp = subset(dge_results_all, cluster==n)
+    if(nrow(tmp)<1) next
+    tmp_up = subset(tmp, avg_log2FC > 0)
+    if(nrow(tmp_up)<1) next
+    tmp_up$direction = "up"
+    #tmp_down = subset(tmp, avg_log2FC < 0)
+    #tmp_down$direction = "down"
+    
+    #final_top_genes = rbind(head(tmp_up,10), head(tmp_down,10))
+    final_top_genes = head(tmp_up, 10)
+    final_top_genes = final_top_genes[order(final_top_genes$avg_log2FC),]
+    final_top_genes$gene = factor(final_top_genes$gene, levels = final_top_genes$gene)
+    p = ggplot(final_top_genes, aes(y=avg_log2FC, x=gene, fill=direction)) + geom_bar(stat="identity") + ggtitle(paste0(n, ", ", title)) + coord_flip() + theme(axis.text.y =  element_text(size=12) )
+    print(p)
+    
+  }
+}
+```
+
+
+## Percent expression of top markers across clusters
+
+```{r, fig.width=16, fig.height=14}
+top_5_markers = unique(unlist(tapply(cluster_markers$gene, cluster_markers$cluster, head, 5)))
+DotPlot(scData.combined, features = top_5_markers , dot.scale = 4, cols = c("red", "blue"), assay = "RNA") +    RotatedAxis()
+```
+
+## Log2 Fold Changes of top 10 DE genes from each cluster
+
+```{r, fig.width=10, fig.height=4}
+plot_top_genes(cluster_markers, "Cluster markers")
+```
+
+
+```{r}
+
+plot_genes <- function(dataset, genes, split.by=NULL) {
+  
+  all_genes =rownames(dataset@assays$RNA)
+  
+  for (g in genes) {
+    if (!g %in% all_genes) {
+      print(paste0("Gene ",g," has no data (possibly filtered out)."))
+      next
+    } else {
+        p1  =FeaturePlot(object = dataset, features = g, reduction="umap", split.by=split.by, label=T)
+        p2 = VlnPlot(dataset, features = g, ncol = 1, pt.size = 0.01, split.by = split.by)
+        if (is.null(split.by)) {
+          print(plot_grid(p1,p2, ncol=2,align="h"))
+        } else {
+          print(plot_grid(p1,p2, ncol=1,align="v"))
+        }
+        
+    }
+  }
+}
+```
+
+
+# Marker exploration 
+
+## Selection markers and markers of epithelial and contaminating cells
+
+These are markers used in the cell sorting to select cells for scRNA analysis. Cells were sorted as Lgr5+ eGFP cells from Lgr5-EGFP-IRES-CreER(T2) mice. Since eGFP will be expresed in the offspring of cells positive for Lgr5 at the time of Cre induction, we would expect mainly epithelial cells to be selected. 
+
+We here also include markers that should be negative (Cd45 (Ptprc), Cd34, Vim, Myh11) but might be positive in contaminating cells.
+
+
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=c("LGR5","AXIN2","EPCAM","PTPRC","CD34","VIM", "MYH11")
+DefaultAssay(scData.combined) <- "RNA"
+
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")  + theme(axis.text.x=element_text(angle=45,hjust=1))
+#plot_genes(scData.combined, sel_markers)
+```
+
+
+
+## Epithelial subgroup markers
+
+Cd44, Sox2, Lgr5 - Lgr5+ signature
+Muc6 - gland base cells
+Gast, Ghrl, Chga - G-cells
+Dclk1 - Tuft cells
+LIPF - Chief cells
+Pgc, Gif 
+Tff1 (stomach surface), Tff2 - pan stomach epithelial cell markers
+Tff3 - intestinal (goblet cell) marker
+FABP1 - intestinal differentiated cells
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=c("CD44","SOX2","LGR5","MUC6","MUC5AC","GKN1","GKN2","GAST","GHRL","CHGA","PGC","GIF","MUC2", "DCLK1", "TFF1","TFF2","TFF3","FABP1", "LIPF","ATP4A","ATP4B","PGA3" )
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")  + theme(axis.text.x=element_text(angle=45,hjust=1))
+```
+
+
+## Defence markers
+
+```{r, fig.width=14, fig.height=4}
+sel_markers=c("ITLN1","REG3G","REG3A","REG4", "DMBT1", "CD74")
+DefaultAssay(scData.combined) <- "RNA"
+
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+#plot_genes(scData.combined, sel_markers, split.by="condition")
+```
+
+
+## Intestinal markers
+
+
+```{r, fig.width=14, fig.height=6}
+
+sel_markers=c("CDX2","VIL1","KRT20","AQP8","AQP4","TFF3","SPINK4","MUC2","AQP5","CD44","OLFM4","SI","ATOH1")
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+```{r, fig.width=20, fig.height=8}
+sel_markers=c("LGR5","GKN1","ATP4A","MUC5AC","MUC6")
+dotplot_scRNA_multi_feature(scData.combined, cluster = "cluster_label", group="Condition", features = sel_markers, scale=T)
+
+
+sel_markers=c("CDX2","VIL1","KRT20","AQP4","TFF3","SPINK4","MUC2","AQP5","CD44","OLFM4")
+dotplot_scRNA_multi_feature(scData.combined, cluster = "cluster_label", group="Condition", features = sel_markers, scale=T)
+
+sel_markers=c("ISX","APOA1","ALDOB","DEFA5","ALPI","TREH","ANPEP","SI")
+dotplot_scRNA_multi_feature(scData.combined, cluster = "cluster_label", group="Condition", features = sel_markers, scale=T)
+```
+
+
+## Proliferation markers
+
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=c("TOP2A","MKI67" )
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+## Global markers
+
+CD45 is Ptprc.  
+Ly6g is transiently expressed in monocytes in BM, while it is increasingly expressed in granulocytes and neutrophils with maturation.  
+Pglyrp1 - circulating polymorphonuclear leukocytes (granulocytes + mast cells)  
+
+We here add Cd3e/d/g as pan-T marker and Cd20 (Ms4a1) as mature B-cell marker.
+Gata3, Cxcr6, Rora - T-cell markers
+
+Ly6a(Sca-1) - positive in HSC/MPP
+Procr,Fdg5, Hoxb5 - HSC
+
+Epor, Slamf1(Cd150) - MegE - lineage
+
+```{r, fig.width=14, fig.height=6}
+
+sel_markers=toupper(c("Ptprc","Tcrb","Ly6g","Pglyrp1","Cd4","Cd3e","Cd3d","Cd3g", "Gata3","Cxcr6","Rora","Cd7","Cd8a","Cd19","Ms4a1","Ly6a", "Cd34","Procr","Fgd5","Hoxb5","Epor","Slamf1","Nkg7","Col1a1"))
+DefaultAssay(scData.combined) <- "RNA"
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA") + theme(axis.text.x=element_text(angle=45,hjust=1))
+```
+
+## Granulocyte subpopulations
+
+Pglyrp1 - circulating polymorphonuclear leukocytes (granulocytes + mast cells)  
+Csf3r - colony stimulating factor 3 receptor (granulocytes)  G-CSF-R. Higher in mature blood neutrophils (Shinjo et al. 1995 doi: 10.1111/j.1365-2141.1995.tb05390.x)
+
+Mpo,Elane - neutrophil markers  
+Prg2,Prg3 - eosinophils (Dahlin)  
+Gzmb, Cma1 - Mast cell (Dahlin)  
+Ms4a2, Cpa3 Mast cell, basophil (Dahlin)  
+Prss34, Mcpt8 - basophil (Dahlin)  
+Cd200r3 is a receptor on mastcells on basophils.  
+Fcer1a - basophils, mastcells - high affinity IgE receptor  
+Ggnt2, Ear2, Siglecf - eosinophils  
+Il5ra - eosinophil progenitor  
+Chil3 - immature neutrophils (Nio et al 2004  doi: 10.1007/s00418-004-0654-4)  
+
+
+```{r, fig.width=14, fig.height=6}
+
+sel_markers=toupper(c("Pglyrp1","Csf3r","Mpo","Elane","Chil3","Cd200r3","Gngt2","Ear2","Il5ra","Siglecf","Prg2","Prg3","Gzmb","Cma1","Ms4a2","Cpa3","Prss34","Mcpt8","Fcer1a"))
+DefaultAssay(scData.combined) <- "RNA"
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+## MoMF markers
+
+Adgre4  Blood monocytes (Caminschi et al 2001, doi: 10.4049/jimmunol.167.7.3570)
+Adgre1 = F4/80 = Emr1, Blood Monocytes
+
+CD14lowCD16high - non-classical MoMF    
+CD16 - Fcgr4 (FCGR3A/B)  
+Fcgr1 (Cd64) MoMF  
+Spn (Cd45) classical Mo  
+Cd11b = Itgam  
+
+EMP (Mass et al.) Csf1r + Kit + CD45 low AA4.1(Cd93)+   
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=toupper(c("Adgre4", "Adgre1","Lyz1","Lyz2","Ly6c1","Ccr2","Ccr5","Arg1","Mgst1","Fn1","Cd74","Cd68","S100a8","S100a9","Cd14","Fcgr4","Cx3cr1","Fcgr1","Spn","Itgam","Csf1r","Kit","Cd93"))
+DefaultAssay(scData.combined) <- "RNA"
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+
+## DC markers
+
+Xcr1 cDC
+Siglech pDC
+Irf8 pre-DC1
+Ccr7 cDC2
+Pclaf (2810417H13Rik) CMoP / pre-DC1
+
+Tlr2 cDC
+Tlr4 cDC
+
+
+```{r, fig.width=14, fig.height=6}
+sel_markers=toupper(c( "Socs2", "Xcr1", "Siglech", "Cd209a", "Irf8", "Pclaf", "Tlr2","Tlr4","Tlr7","Tlr9","CD1C","CLEC4C","THBD"))
+DefaultAssay(scData.combined) <- "RNA"
+
+#plot_genes(scData.combined, sel_markers)
+DotPlot(scData.combined, features = sel_markers, cols="RdYlBu", assay="RNA")
+```
+
+```{r}
+FeaturePlot(object = scData.combined,  features = "percent_mito", reduction="umap", label=T)
+```
+## Scores and RNA count per cluster
+
+```{r, fig.width=10, fig.height=6}
+VlnPlot(scData.combined, features = "percent_mito", ncol = 1, pt.size = 0.0) + NoLegend()
+VlnPlot(scData.combined, features = "nCount_RNA", ncol = 1, pt.size = 0.0) + NoLegend()
+VlnPlot(scData.combined, features = "nFeature_RNA", ncol = 1, pt.size = 0.0) + NoLegend()
+```
+
+```{r}
+FeaturePlot(object = scData.combined,  features = "nFeature_RNA", reduction="umap", label=T)
+```
+
+# Final cluster assigment
+
+```{r}
+cluster_assignment = read.table(file.path(data_storage_folder, "Cluster_assignments/Cluster_assignments_2025-02-13.txt"), sep="\t",header=T, stringsAsFactors = F)
+options(width = 180)
+print(cluster_assignment)
+rownames(cluster_assignment) = as.character(cluster_assignment$ClusterID)
+scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Label"], col.name = "cluster_label")
+scData.combined = AddMetaData(scData.combined, cluster_assignment[as.character(scData.combined$seurat_clusters),"Type"], col.name = "cluster_type")
+scData.combined = SetIdent(scData.combined, value="cluster_label" )
+```
+
+```{r, fig.width=14, fig.height=8}
+DimPlot(scData.combined, reduction = "umap", label = TRUE)
+```
+
+```{r}
+m = table(scData.combined$cluster_label, scData.combined$Condition)
+m
+```
+
+```{r, fig.width=10,fig.height=7}
+mm  = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+
+mm_r = sweep(mm, 2, apply(mm,2,sum), "/")
+
+pheatmap(mm_r, cluster_cols = F, cluster_rows=F)
+```
+
+
+```{r}
+saveRDS(scData.combined@meta.data, file=file.path(data_storage_folder, "Yue_IMO_metadata.rds"), compress=T)
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

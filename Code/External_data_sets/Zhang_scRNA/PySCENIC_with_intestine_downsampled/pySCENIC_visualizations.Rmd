@@ -1,0 +1,152 @@
+---
+title: "pySCENIC visualizations - Zhang IM + GCA gut epithelia, downsampled to same median read counts"
+author: "Hilmar Berger"
+
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message = FALSE}
+library(Seurat)
+#library(escape)
+library(msigdbr)
+
+library(ggplot2)
+library(cowplot)
+library(gridExtra)
+
+library(Nebulosa)
+
+data_storage_folder = file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_with_GCA_downsampled")
+
+result_folder = "../../../../Results/Zhang_scRNA/PySCENIC_with_intestine_downsampled/"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+```
+# Overview
+
+This analysis is based on a PySCENIC analysis of the full data set of Zhang et al gastric samples
+
+```{r}
+scData <- readRDS(file.path("../../../../Data/ExtData/Zhang_scRNA", "ZhangIM_and_GutCellAtlas_HealthyAdult_Epi_BBKNN_CC_adjusted.RData"))
+meta <- readRDS("../../../../Data/ExtData/Zhang_scRNA/Zhang_IM_and_intestine_Epi_only_BBKNN_CC_adj_cluster_Metadata.RData")
+scData@meta.data <- meta[Cells(scData),]
+
+scData$cluster_label <- factor(scData$cluster_label, levels=c("Sto gland base","Pit cells 1","Pit cells 2","Pit cells 3","Intestinal stem cell","Enterocyte DD","Enterocyte proximal","TA/Colonocyte","BEST4+ epithelial","Colonocyte AQP8","Colonocyte FABP1","Colonocyte MUC5B","Goblet cell","Paneth","Enteroendocrine","Tuft"))
+```
+
+
+```{r, fig.height=6, fig.width=8}
+scData <- SetIdent(scData, value="cluster_label")
+DimPlot(scData, label=T) + NoLegend()
+```
+
+
+```{r}
+n="Zhang_IM_intestine"
+pyscenic_res = read.table(file.path("../../../../Data/ExtData/Zhang_scRNA/PySCENIC_with_GCA_downsampled/",paste0(n,"/auc_mtx.csv")), sep=",", header=T)
+colnames(pyscenic_res) = gsub("\\.\\.\\.", "", colnames(pyscenic_res))
+```
+
+# Score distribution overview
+
+```{r, fig.width=10, fig.height=10}
+all_tf_names = colnames(pyscenic_res)[2:ncol(pyscenic_res)]
+par(mfrow=c(4,4))
+tmp = mapply(function(x,n) hist(x, breaks=100, main=n, xlab="Score", xlim=c(0,1)), pyscenic_res[, all_tf_names], all_tf_names)
+```
+
+```{r}
+tmp = pyscenic_res[, 2:ncol(pyscenic_res)]
+rownames(tmp) = pyscenic_res$Cell
+scores_ordered <- tmp[rownames(tmp) %in% Cells(scData), ]
+scores_ordered = tmp[Cells(scData)[Cells(scData) %in% rownames(scores_ordered)],]
+```
+
+
+# Overview of TF activity in across clusters
+
+```{r, fig.width=12, fig.height=5, warning=FALSE}
+
+scData <- SetIdent(scData, value="cluster_label")
+
+all_new_cols = c()
+for (n in all_tf_names) {
+  nc = paste0(n,"_score")
+  scData <- AddMetaData(scData, scores_ordered[Cells(scData), n], col.name = nc)
+  all_new_cols = append(all_new_cols, nc)
+  
+  p1 = FeaturePlot(scData, features = nc, order=T, raster = T)
+  p2 = VlnPlot(scData, features=nc, pt.size = 0) + NoLegend()
+  #p3 = plot_density(scData, nc, slot = "data", method = "wkde")
+  #layout_matrix = matrix(c(1,2,1,3),2,2)
+  #grid.arrange(grobs = list(p2,p1,p3),ncol=2,nrow=2, layout_matrix = layout_matrix)
+  print(plot_grid(p1,p2,ncol=2))
+}
+```
+
+<!-- # UMAP -->
+
+
+```{r}
+  n="CDX2"
+  nc = paste0(n,"_score")
+  scData <- AddMetaData(scData, scores_ordered[Cells(scData), n], col.name = nc)
+  
+  p1 = FeaturePlot(scData, features = nc, order=T, raster = F, pt.size = 2)
+  p2 = VlnPlot(scData, features=nc, pt.size = 0) + NoLegend()
+  p <- plot_grid(p1,p2,ncol=2)
+  print(p)
+  
+  # pdf(file.path(result_folder, "CDX2_PYSCENIC_violin.pdf"), width=6, height = 5)
+  # p2 = VlnPlot(scData, features=nc, pt.size = 0) + NoLegend()
+  # print(p2)
+  # dev.off()
+  # 
+  # png(file.path(result_folder, "CDX2_PYSCENIC_featureplot.png"), width=600, height = 500)
+  # p1 = FeaturePlot(scData, features = nc, order=T, raster = F, pt.size = 3)
+  # print(p1)
+  # dev.off()
+  # 
+  svg(file.path(result_folder, "CDX2_PYSCENIC.svg"), width=12, height = 5)
+  p1 = FeaturePlot(scData, features = nc, order=T, raster = T, pt.size = 2, raster.dpi = c(1024,1024))
+  p2 = VlnPlot(scData, features=nc, pt.size = 0) + NoLegend()
+  p <- plot_grid(p1,p2,ncol=2)
+  print(p)
+  
+
+```
+
+
+## UMAP on all clusters including stromal cells
+
+```{r}
+umap_file = file.path(data_storage_folder, "UMAP_on_TF_complete_DS_IM_and_intestine_downsamples.rds")
+
+if(F) {
+  ab = Seurat::RunUMAP(as.matrix(scores_ordered))
+  saveRDS(ab, file = umap_file, compress = T)
+} else {
+  ab = readRDS(file = umap_file)
+}
+
+scData_orig <- scData
+scData <- subset(scData, cells = rownames(scores_ordered))
+scData@reductions$pyscenic = ab
+```
+
+```{r, fig.width=14, fig.height=8}
+scData <- SetIdent(scData, value="cluster_label")
+scData@meta.data$condition = factor(scData$condition, levels=c("Non-atrophic gastritis","Chronic atrophic gastritis", "Mild intestinal metaplasia","Severe intestinal metaplasia", "Gut") |> rev())
+DimPlot(scData, reduction = "pyscenic", label=T) + NoLegend()
+DimPlot(scData, reduction = "pyscenic", label=T, split.by = "condition", ncol = 2) + NoLegend()
+```
+

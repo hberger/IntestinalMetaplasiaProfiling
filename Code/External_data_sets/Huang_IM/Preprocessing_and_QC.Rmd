@@ -1,0 +1,475 @@
+---
+title: "Preprocessing and QC of the healthy samples in the Huang et al data set"
+author: "Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, warning=FALSE, message=FALSE}
+library(ChAMP)
+library(ChAMPdata)
+library(matrixStats)
+library(pheatmap)
+library(dendextend)
+library(dplyr)
+library(minfi)
+library(scales)
+library(Hmisc)
+
+data_storage_folder = "../../../Data/Processed/Huang"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+```
+
+# Data Import
+
+Here I load the idat files from GEO (GSE103186) from the Huang publication [Huang et al., 2018] and perform preprocssing and QC. A sample annotation was already created in  /data/projects/MB119_Methylation/analysis/Stomach_Methylation/public_data_sets/GSE103186_Huang_et_al_IM/GSE103186_Huang_et_al.Rmd  
+
+Here, I load the ex vivo and in vivo idats and merge the data set with the healthy data set. Then, functional normalization [Fortin et al.] is applied.
+
+```{r, fig.width=16, fig.height=8}
+
+if(FALSE){
+  sample_annotation = read.delim("../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/sample_annotation_GSE103186.csv", sep=",")
+
+  idat_folder = "../../../Data/ExtData/Other_Methylation_data/GSE103186_Huang/Raw/IDAT"
+  write.csv(sample_annotation, file.path(idat_folder, "sample_annotation.csv"), quote = F, row.names = FALSE)
+  
+  myLoad = champ.load(directory = idat_folder, method = "minfi")
+  
+  save(myLoad, file = file.path(data_storage_folder, "myLoad.RData"))
+}else{
+  load(file.path(data_storage_folder, "myLoad.RData"))
+}
+```
+
+
+
+# Filtering
+
+Filtered out are probes     
+- with a detection p-value > 0.01  
+- with a bead-count < 3  
+- in which the probed CpG falls near a SNP as defined in Zhou W. *et al.*, 2016  
+- in which the probe aligns to multiple locations with bwa as defined in Nordlund *et al.*, 2013   
+and   
+- non-cg probes  
+- probes located on the X/Y chromosome
+
+
+<!-- ```{r} -->
+
+<!-- if(FALSE){ -->
+
+<!--   myLoad = champ.load(directory = "/data/projects/MB119_Methylation/Raw/public/GSE103186_Huang_et_al_IM", method = "minfi") -->
+<!--   save(myLoad, file = "myLoad.RData") -->
+<!-- }else{ -->
+<!--   load("myLoad.RData") -->
+<!-- } -->
+
+<!-- ``` -->
+
+## Quality Control raw data
+
+The QC function uses the raw beta values for initial quality control:  
+- The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.  
+- The density Plot displays the beta distribution of each sample  
+- The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)  
+
+
+```{r, warning=FALSE, message=FALSE}
+
+mdsPlot(myLoad$beta, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, legendPos = "topleft", legendNCol = 1, sampNames = myLoad$pd$Site)
+
+densityPlot(dat = myLoad$beta, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of raw data (", nrow(myLoad$beta), " probes)", sep = ""))
+
+
+  hc <- hclust(dist(t(myLoad$beta)))
+  dend <- as.dendrogram(hc)
+  MyColor <- rainbow(length(table(myLoad$pd$Sample_Group)))
+  names(MyColor) <- names(table(myLoad$pd$Sample_Group))
+  labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]
+  # dend <- dend %>% set(dend, "labels_cex", 0.7)
+  # dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]])
+  plot(dend, center = TRUE, main = paste("All samples (", nrow(myLoad$beta), " probes)", sep = ""))
+  legend("topright", fill = MyColor, legend = names(MyColor))
+
+```
+
+# Normalization
+
+```{r}
+
+if(FALSE){
+  
+  set.seed(123456789)
+
+  myNorm <- champ.norm(beta = myLoad$beta, method = "SWAN", cores = 12)
+  save(myNorm, file = file.path(data_storage_folder, "myNorm.RData"))
+
+  # myNorm_funcnorm = champ.norm(method = "FunctionalNormalization", cores = 12)
+  # save(myNorm_funcnorm, file = "myNorm_funcnorm.RData")
+  # 
+  }else{
+  load(file.path(data_storage_folder, "myNorm.RData"))
+  load(file.path(data_storage_folder, "myNorm_funcnorm.RData"))
+}
+
+```
+
+# Quality Control normalized Data
+
+## MDS plot
+
+### SWAN
+
+The Multidimensional Scaling Plot (MDS) visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+mdsPlot(myNorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, legendPos = "topleft", legendNCol = 1, sampNames = myLoad$pd$Site)
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r, echo=FALSE, warning=FALSE, message=FALSE} -->
+
+<!-- mdsPlot(myNorm_funcnorm, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, legendPos = "topleft", legendNCol = 1, sampNames = myLoad$pd$Site) -->
+<!-- ``` -->
+
+
+## Density Plot
+
+### SWAN
+
+The density Plot displays the beta distribution of each sample.
+
+```{r}
+
+densityPlot(dat = myNorm, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of normalized data (", nrow(myNorm), " probes)", sep = ""))
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- The density Plot displays the beta distribution of each sample. -->
+
+<!-- ```{r} -->
+
+<!-- densityPlot(dat = myNorm_funcnorm, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of normalized data (", nrow(myNorm), " probes)", sep = "")) -->
+
+<!-- ``` -->
+
+## Dendrogram
+
+### SWAN
+
+The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes)
+
+```{r}
+
+hc <- hclust(dist(t(myNorm)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(myLoad$pd$Sample_Group)))
+names(MyColor) <- names(table(myLoad$pd$Sample_Group))
+labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]
+# dend <- dend %>% set("labels_cex", 0.7)
+# dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- The dendrogram clusters all samples (the distance between the samples is calculated directly by all probes) -->
+
+<!-- ```{r} -->
+
+<!-- hc <- hclust(dist(t(myNorm_funcnorm))) -->
+<!-- dend <- as.dendrogram(hc) -->
+<!-- MyColor <- rainbow(length(table(myLoad$pd$Sample_Group))) -->
+<!-- names(MyColor) <- names(table(myLoad$pd$Sample_Group)) -->
+<!-- labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]] -->
+<!-- # dend <- dend %>% set("labels_cex", 0.7) -->
+<!-- # dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]) -->
+<!-- plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm_funcnorm), " probes)", sep = "")) -->
+<!-- legend("topright", fill = MyColor, legend = names(MyColor)) -->
+
+
+<!-- ``` -->
+
+## Heatmap
+
+### SWAN
+
+The Heatmap visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples.
+
+```{r}
+
+o <- order(-matrixStats::rowVars(myNorm))[1:1000]
+data <- myNorm[o,]
+col_anno <- data.frame("Sample_Group" = myLoad$pd$Sample_Group,
+                       "Site" = myLoad$pd$Site,
+                       stringsAsFactors = F, row.names = myLoad$pd$Sample_Name)
+
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, fontsize_col = 8, annotation_col = col_anno)
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- The Heatmap visualizes the similarity of the samples based on the top 1,000 most variable probes of all samples. -->
+
+<!-- ```{r} -->
+
+<!-- o <- order(-matrixStats::rowVars(myNorm_funcnorm))[1:1000] -->
+<!-- data <- myNorm_funcnorm[o,] -->
+
+<!-- pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, fontsize_col = 8, annotation_col = col_anno) -->
+
+<!-- ``` -->
+
+It appears that the in vivo samples are quite heterogeneous. Cell type correction should be considered, but wihtout a reference data set this could be challaging. 
+
+```{r}
+# undebug(estimateCellCounts)
+# celltypeest = estimateCellCounts(rgSet = myLoad_Huang$rgSet, compositeCellType = "Blood", cellTypes = c("CD8T","CD4T", "NK","Bcell","Mono","Gran"), returnAll = TRUE, meanPlot = TRUE)
+
+
+```
+
+# Batch effect correction
+
+## SWAN
+
+With the ChAMP SVD function (runs Singular Value Decomposition on a dataset to estimate the impact of batch effects) I test for putative batch effects. In order to correct for the slide effect that was detected in the first PC, one sample (normal corpus), which was hybridized alone to a different batch, has to be removed.
+
+```{r}
+
+champ.SVD(RGEffect = TRUE, beta = myNorm)
+
+
+myNorm2 = myNorm[, -which(colnames(myNorm) == "GSM2756944")]
+myLoad$pd = subset(myLoad$pd, myLoad$pd$Sample_Name != "GSM2756944")
+
+if(FALSE) {
+
+
+  myNorm_batch_corrected <- champ.runCombat(beta = myNorm2)
+
+save(myNorm_batch_corrected, file = file.path(data_storage_folder, "myNorm_batch_corrected.RData"))
+
+} else {
+  load(file.path(data_storage_folder, "myNorm_batch_corrected.RData"))
+
+}
+
+champ.SVD(beta = myNorm_batch_corrected, RGEffect = TRUE, resultsDir = "./CHAMP_SVDimages_batch_corrected/")
+
+```
+
+<!-- ## Functional Normalization -->
+
+<!-- With the ChAMP SVD function (runs Singular Value Decomposition on a dataset to estimate the impact of batch effects) I test for putative batch effects and perform subsequently batch effect correction using the champ.runCombat method for batch adjustment, adjusting for the culture as batch. -->
+<!-- The plots show the result of the SVD analysis before and after adjustment.  -->
+
+<!-- ```{r} -->
+
+<!-- myNorm_funcnorm2 = myNorm_funcnorm[, -which(colnames(myNorm_funcnorm) == "GSM2756944")] -->
+
+<!-- champ.SVD(RGEffect = TRUE, beta = myNorm_funcnorm2)   -->
+
+<!-- if(FALSE) { -->
+<!--   myNorm_funcnorm_batch_corrected <- champ.runCombat(beta = myNorm_funcnorm2) -->
+
+
+<!--   save(myNorm_funcnorm_batch_corrected, file = "myNorm_funcnorm_batch_corrected.RData") -->
+
+<!-- } else { -->
+<!--   load("myNorm_funcnorm_batch_corrected.RData") -->
+
+<!-- } -->
+
+<!-- champ.SVD(beta = myNorm_funcnorm_batch_corrected, RGEffect = TRUE, resultsDir = "./CHAMP_SVDimages_batch_corrected/") -->
+
+<!-- # The not batch corrected myNorm_funcnorm will be further used. -->
+<!-- # Here I add averages for the different groups and order it by CHR and MAPINFO: -->
+
+<!-- if(FALSE){ -->
+
+<!--   data("probe.features") -->
+<!--   myNorm_anno_sorted = myNorm_funcnorm -->
+<!--   myNorm_anno_sorted = merge.data.frame(myNorm_anno_sorted, probe.features, by=0, sort = F, all.x = T ) -->
+<!--   myNorm_anno_sorted = myNorm_anno_sorted[order(myNorm_anno_sorted$CHR, myNorm_anno_sorted$MAPINFO),] -->
+<!--   myNorm_anno_sorted$AVG_N = rowMeans(myNorm_anno_sorted[,rownames(myLoad$pd[myLoad$pd$Sample_Group == "Normal",])]) -->
+<!--   myNorm_anno_sorted$AVG_mildIM = rowMeans(myNorm_anno_sorted[,rownames(myLoad$pd[myLoad$pd$Sample_Group == "mild IM",])]) -->
+<!--   myNorm_anno_sorted$AVG_IM = rowMeans(myNorm_anno_sorted[,rownames(myLoad$pd[myLoad$pd$Sample_Group == "IM",])]) -->
+
+<!--   save(myNorm_anno_sorted, file = "myNorm_anno_sorted_with_average.RData") -->
+
+<!-- }else{ -->
+<!--   load("myNorm_anno_sorted_with_average.RData") -->
+<!--   } -->
+
+
+
+
+
+
+
+
+
+<!-- ``` -->
+
+<!-- The SVD analysis shows that with the functional normalization, the strong effect in the first PC in the SWAN normalized data set is shifted towards the second PC. Here, Sample Group and Site are the same parameters.  -->
+
+<!-- As it is not possible to adjust for the Slide, the data set with functional normalization might be used, because this methods tends to remove minor batch effects. -->
+
+# Quality Control normalized and corrected data
+
+## MDS plot
+
+### SWAN
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+mdsPlot(myNorm_batch_corrected, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, legendPos = "topleft", legendNCol = 1, sampNames = myLoad$pd$Site)
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r, echo=FALSE, warning=FALSE, message=FALSE} -->
+
+<!-- mdsPlot(myNorm_funcnorm_batch_corrected, numPositions = 1000, sampGroups = myLoad$pd$Sample_Group, legendPos = "topleft", legendNCol = 1, sampNames = myLoad$pd$Site) -->
+<!-- ``` -->
+
+
+## Density Plot
+
+### SWAN
+
+```{r}
+
+densityPlot(dat = myNorm_batch_corrected, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of normalized and batch corrected data (", nrow(myNorm_batch_corrected), " probes)", sep = ""))
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r} -->
+
+<!-- densityPlot(dat = myNorm_funcnorm_batch_corrected, sampGroups = myLoad$pd$Sample_Group, main = paste("Density plot of normalized and batch corrected data (", nrow(myNorm), " probes)", sep = "")) -->
+
+<!-- ``` -->
+
+## Dendrogram
+
+### SWAN
+
+```{r}
+
+hc <- hclust(dist(t(myNorm_batch_corrected)))
+dend <- as.dendrogram(hc)
+MyColor <- rainbow(length(table(myLoad$pd$Sample_Group)))
+names(MyColor) <- names(table(myLoad$pd$Sample_Group))
+labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]
+# dend <- dend %>% set("labels_cex", 0.7)
+# dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]])
+plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm_batch_corrected), " probes)", sep = ""))
+legend("topright", fill = MyColor, legend = names(MyColor))
+
+
+```
+
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r} -->
+
+<!-- hc <- hclust(dist(t(myNorm_funcnorm_batch_corrected))) -->
+<!-- dend <- as.dendrogram(hc) -->
+<!-- MyColor <- rainbow(length(table(myLoad$pd$Sample_Group))) -->
+<!-- names(MyColor) <- names(table(myLoad$pd$Sample_Group)) -->
+<!-- labels_colors(dend) <- MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]] -->
+<!-- # dend <- dend %>% set("labels_cex", 0.7) -->
+<!-- # dend <- dend %>% set("leaves_pch", 19) %>% set("leaves_cex", 0.6) %>% set("leaves_col",         MyColor[myLoad$pd$Sample_Group[order.dendrogram(dend)]]) -->
+<!-- plot(dend, center = TRUE, main = paste("All samples (", nrow(myNorm_funcnorm_batch_corrected), " probes)", sep = "")) -->
+<!-- legend("topright", fill = MyColor, legend = names(MyColor)) -->
+<!-- ``` -->
+
+## Heatmap
+
+### SWAN
+
+
+```{r}
+
+o <- order(-matrixStats::rowVars(myNorm_batch_corrected))[1:1000]
+data <- myNorm_batch_corrected[o,]
+col_anno <- data.frame("Sample_Group" = myLoad$pd$Sample_Group,
+                       "Site" = myLoad$pd$Site,
+                       stringsAsFactors = F, row.names = myLoad$pd$Sample_Name)
+
+pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, fontsize_col = 8, annotation_col = col_anno)
+
+```
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r} -->
+
+<!-- o <- order(-matrixStats::rowVars(myNorm_funcnorm_batch_corrected))[1:1000] -->
+<!-- data <- myNorm_funcnorm_batch_corrected[o,] -->
+
+<!-- pheatmap(data, cluster_rows = T, main = "Heatmap of 1,000 most variable CpGs", show_rownames = FALSE, fontsize_col = 8, annotation_col = col_anno) -->
+
+<!-- ``` -->
+
+# Correlation
+
+### SWAN
+
+```{r}
+
+# c <- rcorr(myNorm, type = "spearman")
+# pheatmap(c$r,annotation_col = col_anno)
+
+o <- order(-matrixStats::rowVars(myNorm))[1:50000]
+
+c <- rcorr(myNorm[o,], type = "spearman")
+pheatmap(c$r,annotation_col = col_anno)
+```
+
+
+<!-- ### Functional Normalization -->
+
+<!-- ```{r} -->
+
+<!-- # c <- rcorr(myNorm_funcnorm, type = "spearman") -->
+<!-- # pheatmap(c$r,annotation_col = col_anno) -->
+
+<!-- o <- order(-matrixStats::rowVars(myNorm_funcnorm))[1:50000] -->
+
+<!-- c <- rcorr(myNorm_funcnorm[o,], type = "spearman") -->
+<!-- pheatmap(c$r,annotation_col = col_anno) -->
+
+<!-- ``` -->
+
+<!-- # Conclusion -->
+
+<!-- The data set, normalized with functional normalization should be used for differential methylation analysis and differential methylation at the CpG level should include the slide as covariate.   -->
+<!-- Or, the adjusted data set will be used and no correction with limma will be performed.   -->

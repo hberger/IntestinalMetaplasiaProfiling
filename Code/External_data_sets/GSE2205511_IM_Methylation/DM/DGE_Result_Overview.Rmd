@@ -1,0 +1,312 @@
+---
+title: "Overview Differential Methalyation analysis"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+library(VennDiagram)
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+library(grid)
+library(data.table)
+
+result_folder = paste("../../../../Results/GSE220511_Methylation",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/ExtData/Other_Methylation_data/GSE220511_IM_nonIM/"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+```
+
+
+
+```{r}
+other_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Other") |> as.data.frame()
+loc_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Locations")  |> as.data.frame()
+island_anno = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19, "Islands.UCSC")  |> as.data.frame()
+colnames(loc_anno) <- c("CHR","MAPINFO","STRAND")
+full_anno <- merge(loc_anno, other_anno, by=0, all.x=T, sort=F)
+full_anno <- merge(full_anno, island_anno, by.x="Row.names", by.y=0, all.x=T, sort=F)
+rownames(full_anno) <- full_anno$Row.names
+
+probes_450k <- rownames(subset(full_anno, Methyl450_Loci==TRUE))
+```
+
+
+```{r}
+order_df <- function(d, column, decreasing = F) {return(d[order(d[[column]], decreasing = decreasing),])}
+```
+
+```{r}
+all_hyper_cpg <- list()
+all_hypo_cpg <- list()
+```
+
+```{r}
+add_gene_symbol <- function(d, gene_name_col = "UCSC_RefGene_Name", cpg_id_col = "Row.names") {
+  gg <- strsplit(d[[gene_name_col]], ";")
+  tmp <- data.table(rep(d[[cpg_id_col]], times = sapply(gg, length)), unlist(gg)) |> setnames(c("V1","V2"), c("cpg","gene"))
+  setorder(tmp, cpg, gene)
+  tmp <- unique(tmp)
+  xx <- tmp[, .(gene_symbol=paste0(gene, collapse=",")), by="cpg"]
+  setkey(xx, "cpg")
+  d$gene_symbol = xx[d[[cpg_id_col]]]$gene_symbol
+  return(d)
+}
+```
+
+
+
+# IM vs. Non-IM, only new (EPIC) samples
+
+```{r}
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_annotated.RData") )
+im_nonim_results <- all_results_betas_annotated$IM_vs_NonIM
+im_nonim_results <- add_gene_symbol(im_nonim_results)
+#im_nonim_results$gene_symbol = strsplit(im_nonim_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste0(sort(unique(x)), collapse=",") )
+```
+
+
+We use |log2FC| > 0.2 and raw pvalue < 0.001 as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp =im_nonim_results 
+
+hyper_cpg = subset(tmp, logFC > 0.2 & P.Value < 0.001)
+hyper_cpg$gene_symbol = strsplit(hyper_cpg$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
+hyper_genes = unique(unlist(strsplit(hyper_cpg$UCSC_RefGene_Name, ";")))
+
+hypo_cpg = subset(tmp, logFC < -0.2 & P.Value < 0.001)
+hypo_genes = unique(unlist(strsplit(hypo_cpg$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_nonIM"
+all_hyper_cpg[[n]] <- hyper_cpg
+all_hypo_cpg[[n]] <- hypo_cpg
+
+```
+
+We identified `r length(hyper_genes)` hypermethylated and `r length(hypo_genes)` hypomethylated genes. 
+
+
+## Most frequently hypermethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=10}
+par(mar=c(5,10,4,1))
+with(subset(hyper_cpg, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypermethylated genes")
+```
+
+
+## Most frequently hypomethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=10}
+par(mar=c(5,10,4,1))
+with(subset(hypo_cpg, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
+
+
+
+
+<!-- # Export -->
+
+<!-- Gene/Cpg lists defined above are save to file *Methylation_DM_lists.Rdata*. -->
+
+<!-- ```{r} -->
+<!-- save(all_hyper_cpg, all_hypo_cpg, file=file.path(data_storage_folder, "Methylation_DM_lists.Rdata"), compress=T) -->
+<!-- ``` -->
+
+
+# Overlap with ESGI 
+
+```{r}
+inp_folder = "../../../../Data/Processed/ClonalCultures/DNAm"
+```
+
+
+# IM vs. healthy, only new (EPIC) samples
+
+```{r}
+load(file.path(inp_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+im_vs_healthy_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
+im_vs_healthy_results$gene_symbol = strsplit(im_vs_healthy_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste0(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_vs_healthy_results
+
+esgi_hyper_cpg = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+esgi_hyper_genes = unique(unlist(strsplit(esgi_hyper_cpg$UCSC_RefGene_Name, ";")))
+
+esgi_hypo_cpg = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+esgi_hypo_genes = unique(unlist(strsplit(esgi_hypo_cpg$UCSC_RefGene_Name, ";")))
+
+#n = "IM_vs_nonIM_with_healthy"
+n = "ESGI_IM_vs_healthy"
+all_hyper_cpg[[n]] <- esgi_hyper_cpg
+all_hypo_cpg[[n]] <- esgi_hypo_cpg
+```
+
+
+
+
+# Overlaps - all three sets
+
+```{r}
+all_probes = all_results_betas_annotated[[1]]$Row.names |> as.character()
+```
+
+
+# Export
+
+Gene/Cpg lists defined above are save to file *Methylation_DM_lists_IM_and_nonIM_vs_healthy.Rdata*.
+
+```{r}
+save(all_hyper_cpg, all_hypo_cpg, file=file.path(data_storage_folder, "Methylation_DM_lists_IM_vs _NonIM_and_vs_healthy.Rdata"), compress=T)
+```
+
+
+## Hypermethylated CpGs
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hyper_cpg, function(x) x$Row.names[x$Row.names %in% all_probes]), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+
+## Hypermethylated genes
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+gene_lists <- lapply(all_hyper_cpg, function(x) unique(subset(x, Row.names %in% all_probes)$gene_symbol))
+x <- venn.diagram(gene_lists, filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+```{r}
+ovlp <- calculate.overlap(gene_lists)
+```
+
+
+
+## Intersecting hypermethylated genes
+
+### By CpG
+
+```{r}
+intersect = c()
+for (n in names(all_hyper_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hyper_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, Row.names %in% all_hyper_cpg[[n]]$Row.names) 
+  }
+}
+
+intersect$gene_symbol |> table() |> sort(decreasing = T) |> head(100)
+
+```
+
+### By Gene
+
+```{r}
+intersect = c()
+for (n in names(all_hyper_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hyper_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, gene_symbol %in% all_hyper_cpg[[n]]$gene_symbol) 
+  }
+}
+
+gg <- intersect$gene_symbol |> table() |> sort(decreasing = T) 
+names(gg) <- substr(names(gg), 1, 12)
+head(gg, 100)
+```
+
+
+
+
+## Hypomethylated CpGs
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+x <- venn.diagram(lapply(all_hypo_cpg, function(x) subset(x, Row.names %in% all_probes)$Row.names), filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+
+
+## Hypomethylated genes
+
+```{r, fig.height=6, fig.width=6}
+grid.newpage()
+gene_lists <- lapply(all_hypo_cpg, function(x) unique(subset(x, !is.na(gene_symbol) & Row.names %in% all_probes)$gene_symbol))
+x <- venn.diagram(gene_lists, filename = NULL, disable.logging = T, euler.d=T, 
+                  fill = c("cornflowerblue", "green"),
+                  cat.cex = .7)
+grid.draw(x)
+```
+
+
+```{r}
+ovlp <- calculate.overlap(gene_lists)
+```
+
+
+## Intersecting hypomethylated genes
+
+### By CpG
+
+```{r}
+intersect = c()
+for (n in names(all_hypo_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hypo_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, Row.names %in% all_hypo_cpg[[n]]$Row.names) 
+  }
+}
+
+intersect$gene_symbol |> table() |> sort(decreasing = T) |> head(100)
+
+```
+
+### By Gene
+
+```{r}
+intersect = c()
+for (n in names(all_hypo_cpg)) {
+  if(length(intersect) ==0) {
+    intersect = all_hypo_cpg[[n]]
+    next
+  } else {
+    intersect = subset(intersect, gene_symbol %in% all_hypo_cpg[[n]]$gene_symbol) 
+  }
+}
+ 
+intersect$gene_symbol |> table()  |> sort(decreasing = T) |> head(200)
+
+```

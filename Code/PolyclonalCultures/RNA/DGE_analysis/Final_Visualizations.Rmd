@@ -1,0 +1,204 @@
+---
+title: "RNA-Seq analysis for phenotyping of gastric clones HISAT2 alignment to hg38, featureCounts, polyclonal samples - Visualizations"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, warning=FALSE, message=FALSE}
+rm(list=ls())
+
+library(readxl)
+library(reshape2)
+library(pheatmap)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(fgsea)
+library(data.table)
+
+result_folder = "../../../../Results/PolyclonalCultures/RNA"
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+```
+
+```{r}
+load(file.path(result_folder, "DGE_analysis_image.Rdata"))
+norm_counts = read.table(file.path(result_folder, "Normalized_expression_data.txt"), sep="\t", header=T, stringsAsFactors = F)
+colnames(norm_counts) = gsub("Row.names", "Geneid", colnames(norm_counts))
+
+ed$Condition = ifelse(ed$Group == "Control", ifelse(ed$Site=="small intestinal", "SI", "Stomach control"), ed$Group)
+ed$Condition = factor(ed$Condition, levels=c("Stomach control","Non-IM", "IM","SI"))
+```
+
+```{r}
+anno_colors = list("Condition"=c("Stomach control"="lightgreen","SI"="red","IM"="orange","Non-IM"="blue"), "Site"=c("Antrum"="pink","small intestinal"="red1","Corpus"="yellow","Angular incisure"="red3"))
+```
+
+
+# Known IM/intestinal markers
+
+
+```{r, fig.width=12}
+cond_order = c("Normal Antrum","Non-IM","IM","SI")
+sel_genes_2 = c("SOX2","TFF1","TFF2","GKN1","MUC5AC","CDX2","HNF4A","VIL1","CD44","AQP5")
+nc_mat_selected <- fpkm_mat[subset(gene_anno, GeneSymbol %in% sel_genes_2)$Geneid,]
+rownames(nc_mat_selected) <- gene_anno[rownames(nc_mat_selected), "GeneSymbol"]
+
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+dd$sample = gsub("^X","", dd$sample)
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+
+dd$Condition <- ifelse(dd$Condition == "Stomach control","Normal Antrum", as.character(dd$Condition))
+
+dd1 <- subset(dd, gene %in% sel_genes_2)
+dd1$gene <- factor(dd1$gene, levels = sel_genes_2)
+dd1$Condition <- factor(dd1$Condition, levels = cond_order)
+ggplot(dd1, aes(x=Condition, fill=Condition, y=expression)) + 
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1)) + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  facet_wrap(~gene, scales = "free_y", ncol = 5) + 
+  labs(y="FPKM")
+```
+
+```{r, fig.width=10, fig.height=6}
+sel_genes = c("GKN1","GKN2","PGC","MUC5AC","MUC6","TFF3","VIL1","CDX1","CDX2","ISX", "MUC2", "SPINK4","ITLN1","TFF2","DEFA5", "TFF1", "REG4", "LRIG1", "OLFM4","AQP8","CLCA4","CA1","HOXA13","APOA1","APOA4","HOXC11","SOX2","SOX21", "AXIN2","ALPI", "TREH", "ANPEP", "SI")
+
+sel_samples = rownames(ed)
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+col_anno = ed[, c("Condition","Site"), drop=F]
+#rownames(col_anno) = paste0("X", ed$Library.number)
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+pheatmap(nc_mat_selected, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(nc_mat_selected), "Remark"], annotation_colors = anno_colors)
+
+tmp = nc_mat_selected[,order(ed[colnames(nc_mat_selected), "Remark"])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["CDX2",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["CDX1",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+
+```
+
+
+```{r, fig.width=10, fig.height=6}
+sel_samples = rownames(subset(ed, !Condition %in% c("SI","Stomach control")))
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+col_anno = ed[, c("Condition","Site"), drop=F]
+#rownames(col_anno) = paste0("X", ed$Library.number)
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+pheatmap(nc_mat_selected, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(nc_mat_selected), "Remark"], annotation_colors = anno_colors)
+
+tmp = nc_mat_selected[,order(ed[colnames(nc_mat_selected), "Remark"])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["CDX2",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["CDX1",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["SOX21",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+tmp = nc_mat_selected[,order(nc_mat_selected["SOX2",])]
+pheatmap(tmp, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[colnames(tmp), "Remark"], annotation_colors = anno_colors, cluster_cols = F)
+
+```
+
+
+```{r, fig.width=16, fig.height=8}
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+
+ggplot(dd, aes(x=gene, fill=Condition, y=expression)) + geom_boxplot() + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) 
+```
+
+
+
+
+```{r}
+sel_genes = c("CDX2","CDX1","VIL1","ALPI", "ANPEP", "SI","AQP8","CLCA4","CA1","MUC2","DEFA5","SOX2","PGC","GKN1")
+sel_samples = rownames(subset(ed, !Condition %in% c("Stomach control")))
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+col_anno = ed[, c("Condition","Patient")]
+#rownames(col_anno) = paste0("X", ed$Library.number)
+
+```
+
+```{r, fig.width=16}
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+#dd$sample = gsub("^X","", dd$sample)
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+
+dd$gene = factor(dd$gene, levels=sel_genes)
+dd$Condition = factor(dd$Condition, levels=c("SI","IM","Non-IM"))
+
+ddt = as.data.table(dd)[, .(mean=mean(expression), sd=sd(expression), n=.N), by=c("gene","Condition")]
+ddt[, sd:=ifelse(is.na(sd),0,sd)]
+ddt[, sem:=1.96*sd/sqrt(n)]
+ddt[, ymin:=mean-sem]
+ddt[, ymax:=mean+sem]
+ggplot(ddt, aes(x=gene, fill=Condition, y=mean)) + 
+  geom_bar(stat="identity", position = "dodge") + 
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1)) + 
+  geom_errorbar(aes(ymin=ymin, ymax=ymax), position = position_dodge2(), size=1.2) + 
+  labs(y="Mean normalized expression", title="Gut and stomach markers in Zhengzhou cohort", x="") + theme(text=element_text(size=24), axis.text.x=element_text(angle=45, size=24))
+```
+
+```{r, fig.width=10, fig.height=6}
+sel_genes = c("VIL1","CDX2","SPINK4", "REG4", "MUC2")
+
+sel_samples = ed$sampleID
+nc_selected = subset(norm_counts, GeneSymbol %in% sel_genes )
+nc_mat_selected = as.matrix(nc_selected[,sel_samples])
+nc_mat_selected = nc_mat_selected + rnorm(ncol(nc_mat_selected) * nrow(nc_mat_selected), 0,0.01)
+rownames(nc_mat_selected) = nc_selected$GeneSymbol
+col_anno = ed[, c("Condition"), drop=F]
+
+breaks_new=c(-10,-5,-3,seq(-2,2,by=4/94),3,5,10)
+pheatmap(nc_mat_selected, scale="row", main="Known IM markers" , annotation_col = col_anno, breaks=breaks_new, labels_col = ed[gsub("^X", "", colnames(nc_mat_selected)), "Library.Name"])
+
+```
+
+```{r, fig.width=10}
+dd = reshape2::melt(nc_mat_selected)
+colnames(dd) = c("gene","sample", "expression")
+
+dd = as.data.table(merge(dd, ed[, c("sampleID","Patient","Condition")], by.x="sample", by.y="sampleID"))
+
+#ggplot(subset(dd, !Condition == "Normal Antrum"), aes(x=gene, fill=Condition, y=expression)) + geom_boxplot() + facet_grid(Patient ~ .) + theme(text = element_text(size=20),         axis.text.x = element_text(angle=90, hjust=1)) 
+ggplot(subset(dd, !Condition == "Normal Antrum"), aes(x=Condition, fill=Condition, y=expression)) + geom_boxplot() + facet_grid( ~ gene) + theme(text = element_text(size=24),         axis.text.x = element_text(angle=90, hjust=1)) 
+
+pdf("IM_markers.pdf", height=6, width=8)
+ggplot(subset(dd, !Condition == "Normal Antrum"), aes(x=Condition, fill=Condition, y=expression)) + geom_boxplot() + facet_grid( ~ gene) + theme(text = element_text(size=36), axis.text.x = element_text(angle=90, hjust=1), legend.position="none") + xlab(NULL)
+dev.off()
+
+```
+

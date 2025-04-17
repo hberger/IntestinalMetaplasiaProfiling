@@ -1,0 +1,115 @@
+---
+title: "scData Preprocessing"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(Seurat)
+library(ggplot2)
+
+library(readxl)
+library(knitr)
+library(data.table)
+library(cowplot)
+
+library(harmony)
+
+library(pheatmap)
+
+# Do not run the following two lines when executing in Rstudio
+library(future)
+options(future.globals.maxSize=10*2**32)
+#plan("multicore", workers = 12)
+plan("sequential")
+
+data_storage_folder = "../../../Data/ExtData/Yue_scRNA_IMO"
+if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+```
+
+```{r}
+load(file.path(data_storage_folder, "All_Filtered_scData.Rdata"))
+
+table(all_ge_data_filtered$sample_label)
+```
+
+
+
+# Final preprocessing
+
+Since there are several independent batches of samples with partially very different outcomes in terms of processing quality and cell viability we will use data set integration using Harmony.
+
+
+```{r}
+rerun = F
+if(rerun) {
+  set.seed(20230808)
+  scData = all_ge_data_filtered
+  rm(all_ge_data_filtered)
+  scData <- NormalizeData(object = scData, normalization.method = "LogNormalize", scale.factor = 1e4)
+  scData <- FindVariableFeatures(object = scData, selection.method = "vst")
+  scData <- ScaleData(object = scData)
+  scData <- RunPCA(scData, npcs = 50)
+  scData <- RunHarmony(scData, 
+                       group.by.vars = "orig.ident", 
+                       dims.use = 1:30)
+  scData <- RunUMAP(scData, reduction = "harmony", dims = 1:20)
+  scData <- FindNeighbors(scData, reduction = "harmony", dims = 1:20)
+  scData <- FindClusters(scData, resolution = 0.5)
+  scData.combined <- scData
+}
+```
+
+
+```{r}
+filename <- file.path(data_storage_folder, "Yue_IMO_Harmony.rds")
+if(rerun) {
+  saveRDS(scData.combined, file=filename, compress = T)  
+} else {
+  scData.combined <- readRDS(filename)
+}
+
+```
+
+# Global clusters
+
+```{r, fig.width=14}
+DimPlot(scData.combined, reduction = "umap", group.by = "orig.ident")
+
+p1 <- DimPlot(scData.combined, reduction = "umap", group.by = "Condition")
+p2 <- DimPlot(scData.combined, reduction = "umap", label = TRUE)
+plot_grid(p1, p2)
+
+DimPlot(scData.combined, reduction = "umap", split.by = "Condition", label = T)
+```
+
+## Cluster assignments
+
+```{r, fig.height=10}
+m = table(scData.combined@meta.data$seurat_clusters, scData.combined@meta.data$sample_label)
+kable(m)
+
+mm = as.matrix.data.frame(m)
+colnames(mm) = colnames(m)
+rownames(mm) = rownames(m)
+mm_rel = sweep(mm, 2, apply(mm, 2,sum), "/")
+pheatmap(mm_rel, main="Relative single cell contribution of each cluster to condition totals")
+```
+
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

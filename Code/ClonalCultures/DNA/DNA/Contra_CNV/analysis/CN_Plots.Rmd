@@ -1,0 +1,234 @@
+---
+title: "CopyNumber MB044 ESGI v2 Clones"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r, message=FALSE}
+library(naturalsort)
+suppressMessages(library(GenomicRanges))
+library(GenomicFeatures)
+library(reshape2)
+library(DNAcopy)
+library(RColorBrewer)
+library(ggplot2)
+library(BiocParallel)
+```
+
+```{r}
+call_cn_segments_chrom = function(c, data) {
+  c_chrom = paste("chr",c,sep="")  
+  tmp = subset(data, Chr == c_chrom)
+  if (nrow(tmp)==0) next
+  cna.dat <- CNA(tmp$Adjusted.Mean.of.LogRatio, tmp$Chr, tmp$OriStCoordinate, data.type="logratio")
+  smooth.cna.dat = smooth.CNA(cna.dat)
+  cna.segment = segment(smooth.cna.dat, verbose = F, undo.splits = "prune")
+  return(cna.segment$output)
+}
+  
+call_cn_segments = function(data) {
+  all_chroms = c(as.character(1:22), "X", "Y")
+  #all_chroms = list()
+  #for ( c in c(as.character(1:19), "X", "Y") ) {
+  all_chrom_res = bplapply(as.list(all_chroms), call_cn_segments_chrom, data, BPPARAM = MulticoreParam(24))  
+  #}
+  all_segs = do.call(rbind, all_chrom_res)
+}
+```
+
+
+
+```{r}
+input_folder = "/data_genome2/projects/MB044_gastric_clones/analysis/DNA/Contra_CNV/"
+samples = list.files(path=input_folder, pattern = "CN_4447_", include.dirs = T)
+
+all_CN_res = list()
+all_long_CN_calls = list()
+for(s in samples) {
+  inp_file = paste(s,"/table/CNATable.10rd.10bases.20bins.txt", sep="")
+  tmp = read.table(file.path(input_folder, inp_file), sep="\t", header=T, stringsAsFactors = F)
+  tmp$Gene.Sym = 1:nrow(tmp)
+  tt = naturalsort(names(table(tmp$Chr)))
+  chrom_sorted = 1:length(tt)
+  names(chrom_sorted) = tt
+  tmp$chromorder = chrom_sorted[as.character(tmp$Chr)]
+  tmp = tmp[order(tmp$chromorder, tmp$OriStCoordinate), ]
+  all_CN_res[[s]] = tmp
+  #inp_file2 = paste("CN_3466_",s,"/table/CNATable.10rd.10bases.20bins.txt.LargeDeletion.txt", sep="")
+  #tmp2 = read.table(file.path(input_folder, inp_file2), sep="\t", header=T)
+  #tmp2$sample = s
+  #all_long_CN_calls[[s]] = tmp2
+}
+
+```
+
+
+```{r}
+rerun_segmentation = FALSE
+if(rerun_segmentation) {
+  for(s in samples) {
+    cat(paste0("Running segmentation for sample ", s, "\n"))
+    segs = call_cn_segments(all_CN_res[[s]])
+    segs$sample = s
+    all_long_CN_calls[[s]] = segs
+  }
+  save(all_long_CN_calls, file="Long_CNV_recalled.Rdata")
+} else {
+  load("Long_CNV_recalled.Rdata")
+}
+```
+
+
+# Genome Overview
+
+```{r}
+palette(brewer.pal(8, "Set2"))
+```
+
+
+```{r, fig.width=12, fig.heigth=8}
+for (s in samples) {
+  chr = unique(all_CN_res[[s]]$Chr)
+  plot(runmed(all_CN_res[[s]]$Adjusted.Mean.of.LogRatio,21), pch=20, ylim=c(-7, 7), ylab="log ratio sample vs. control, running median, k=21", main = paste(s, "vs. Control"), col=chrom_sorted[as.character(all_CN_res[[s]]$Chr)])
+  abline(h=c(-1, 0, 1))
+  legend("topleft", legend=chr, fill=1:length(chr), cex=0.7)
+}
+```
+
+```{r, fig.width=12, fig.heigth=8, eval=FALSE, echo=FALSE}
+par(mfrow=c(length(all_CN_res),1))
+for (s in samples) {
+  tmp = all_CN_res[[s]]
+  tmp2 = subset(tmp, P.Value < 0.05)
+  chr = unique(tmp2$Chr)
+  plot(runmed(tmp2$Adjusted.Mean.of.LogRatio,21), pch=20, ylim=c(-7, 7), ylab="log ratio sample vs. control, running median, k=21", main = paste(s, "vs. Control"), col=chrom_sorted[as.character(tmp2$Chr)], xaxt="n")
+  abline(h=c(-1, 0, 1))
+  legend("topleft", legend=chr, fill=1:length(chr), cex=0.7)
+}
+```
+
+
+# All individual chromosomes
+
+```{r, fig.width=12, fig.heigth=8, eval=FALSE, echo=FALSE}
+for ( c in c(as.character(1:19), "X", "Y") ) {
+  c_chrom = paste("chr",c,sep="")
+  for (s in samples) {
+    try({
+    tmp = subset(all_CN_res[[s]], Chr==c_chrom)
+    plot(tmp$OriStCoordinate, runmed(tmp$Adjusted.Mean.of.LogRatio,21), pch=20, ylim=c(-7, 7), ylab="log ratio sample vs. control, running median, k=21", main = paste(s, "vs. Control"), sub=c_chrom, col=chrom_sorted[as.character(tmp$Chr)], xlab="Genomic coordinate")
+    abline(h=c(-1, 0, 1), lty=2)
+    #legend("topleft", legend=, fill=1:length(chr), cex=0.7)
+    tmp2 = subset(all_long_CN_calls[[s]], chrom==c_chrom)
+    # if(nrow(tmp2)==0) next
+    # for (i in 1:nrow(tmp2)) {
+    #   tt = tmp2[i,, drop=F]
+    #   lines(list(x=c(tt$OriStCoordinate, tt$OriEndCoordinate), y=c(tt$LogRatios, tt$LogRatios)), col="red", lwd=3)  
+    # }
+      for (i in 1:nrow(tmp2)) {
+        tt = tmp2[i,, drop=F]
+        if (abs(tt$seg.mean) < 0.3) next
+        lines(list(x=c(tt$loc.start, tt$loc.end), y=c(tt$seg.mean, tt$seg.mean)), col="black", lwd=3)  
+      }
+
+    })
+  }
+}
+```
+
+
+```{r, fig.width=10, fig.heigth=12}
+for ( c in c(as.character(1:19), "X", "Y") ) {
+  c_chrom = paste("chr",c,sep="")
+  
+  all_sample_tmp = list()
+  all_sample_long_tmp = list()
+  for (s in samples) {
+    tmp = subset(all_CN_res[[s]], Chr==c_chrom)
+    if (nrow(tmp)==0) next
+    tmp$sample = s
+    all_sample_tmp[[s]] = tmp
+    tmp2  =subset(all_long_CN_calls[[s]], chrom==c_chrom)
+    all_sample_long_tmp[[s]] = tmp2
+    
+  }
+  chrom_across_samples_df = do.call(rbind, all_sample_tmp)  
+  cnv_long_across_samples_df = do.call(rbind, all_sample_long_tmp)
+  
+  if(is.null(chrom_across_samples_df)) next
+  if(nrow(cnv_long_across_samples_df) == 0) { next } else {
+    cnv_long_across_samples_df = subset(cnv_long_across_samples_df, abs(seg.mean) > 0.3)
+  }
+  
+  p = ggplot(chrom_across_samples_df, aes(x=OriStCoordinate, y=Adjusted.Mean.of.LogRatio)) +
+    geom_point(size=0.3) + 
+    geom_segment(data=cnv_long_across_samples_df, aes(x=loc.start, xend=loc.end, y=seg.mean, yend=seg.mean), col="red", size=1.5) + 
+    facet_grid(sample~.) + ggtitle(paste("Chromosome",c))
+  
+  print(p)
+  }
+```
+
+
+# Genes in regions
+
+```{r}
+M12db = loadDb("/data_genome1/References/R_transformed/GENCODE_basic_M12_TxDB.db")
+tx_anno = read.table("/data_genome1/References/MusMusculus/Annotation/GENCODE/M12/gencode.vM12.transcript.anno.txt", sep="\t", header=T, stringsAsFactors = F)
+rownames(tx_anno) = tx_anno$transcript
+
+all_long_CN_calls_df = do.call(rbind, all_long_CN_calls)
+all_long_CN_calls_df = subset(all_long_CN_calls_df, abs(seg.mean) > 0.3)
+all_long_CN_calls_df$call = ifelse(all_long_CN_calls_df$seg.mean> 0, "gain", "loss")
+long_CN_ranges = with(all_long_CN_calls_df, GRanges(gsub("chr","",chrom), IRanges(loc.start, loc.end), sample=sample) )
+```
+
+```{r}
+ovlp = findOverlaps(long_CN_ranges,transcripts(M12db))
+
+tx_names =transcripts(M12db)[subjectHits(ovlp)]$tx_name
+gene_names = tx_anno[tx_names, "GeneSymbol"]
+all_long_CN_calls_df$genes = ""
+all_long_CN_calls_df$genes = tapply(gene_names, queryHits(ovlp), function(x) paste(unique(x), collapse=","))
+
+tmp = tapply(all_long_CN_calls_df[queryHits(ovlp),]$call, list(paste(all_long_CN_calls_df[queryHits(ovlp),"chrom"],gene_names), all_long_CN_calls_df[queryHits(ovlp),]$sample), function(x) paste(unique(x), collapse=",") )
+tmp[is.na(tmp)] <- "nc"
+ss = strsplit(rownames(tmp)," ")
+gene_by_sample_and_state = data.frame(chr = sapply(ss, function(x) x[1]), gene = sapply(ss, function(x) x[2]), tmp)
+gene_by_sample_and_state$chr = factor(gene_by_sample_and_state$chr, levels=naturalsort(unique(gene_by_sample_and_state$chr)))
+gene_by_sample_and_state = gene_by_sample_and_state[order(gene_by_sample_and_state$chr, gene_by_sample_and_state$gene),]
+```
+
+Genes in affected samples have been stored in the files: 
+
+*Long_CN_calls_all_samples_with_genes.txt*
+
+*Gene_status_by_sample.txt*
+
+```{r}
+write.table(all_long_CN_calls_df, file="Long_CN_calls_all_samples_with_genes.txt", sep="\t", row.names=F, quote=F)
+write.table(gene_by_sample_and_state, file="Gene_status_by_sample.txt", sep="\t", row.names=F, quote=F)
+```
+
+```{r}
+varcalls = read.table("../../Strelka/called_variants/SnpEff/Colibactin_Strelka_Exome_calls.txt", sep="\t", header=T, stringsAsFactors = F)
+
+cn_state_ts = melt(gene_by_sample_and_state, id.vars = c("chr","gene"))
+colnames(cn_state_ts) = c("chr","gene","sample","CN_state")
+cn_state_ts$sample_fixed = paste("2702", cn_state_ts$sample, sep="_")
+
+varcalls_with_cn = merge(varcalls, cn_state_ts[,c("gene","sample_fixed","CN_state")], by.x=c("Gene", "SAMPLE"), by.y=c("gene","sample_fixed"), all.x=T, sort=F)
+
+write.table(varcalls_with_cn, file="SNP_Indel_calls_with_CN.txt", sep="\t", row.names=F, quote=F)
+```
+

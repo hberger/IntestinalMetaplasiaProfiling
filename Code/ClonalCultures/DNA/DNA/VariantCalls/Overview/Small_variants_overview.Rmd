@@ -1,0 +1,442 @@
+---
+title: "Analysis ESGI v2 Exome Sequencing - SNV/InDel Overview"
+author: "Hilmar Berger"
+output:
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, message=FALSE}
+rm(list=ls())
+suppressMessages(library(GenomicRanges))
+suppressMessages(library(IRanges))
+suppressMessages(library(reshape2))
+suppressMessages(library(gplots))
+suppressMessages(library(pheatmap))
+suppressMessages(library(data.table))
+suppressMessages(library(GenomicFeatures))
+suppressMessages(library(ggbio))
+suppressMessages(library(xlsx))
+library(SomaticSignatures)
+library(ggplot2)
+library(naturalsort)
+library(deconstructSigs)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(gridExtra)
+```
+
+# Data set 
+
+Somatic mutations from exome sequencing data of both mice analyzed in MB208 up to now are analyzed here. 
+
+```{r}
+load("../ESGI_v2_Exome_Strelka_Calls.Rdata")
+all_variants$varID = paste(seqnames(all_variants),":",start(all_variants),"_",all_variants$REF,"/",unstrsplit(CharacterList(all_variants$ALT),sep = ","),sep="")
+
+anno_unique_sites_highest_impact[, varID := paste(CHROM,":",POS,"_",REF,"/",ALT,sep="")]
+setkey(anno_unique_sites_highest_impact, varID)
+
+ed = read.xlsx("../../../../metadata/DNA/SampleDescription.xls", sheetIndex = 1, stringsAsFactors=F)
+rownames(ed) = ed$SampleID
+ed$SampleDesc = ed$SampleName
+
+mcols(all_variants) = merge(mcols(all_variants), ed, by.x="sampleID", by.y="SampleID", all.x=T, sort=F)
+
+sample_count = table(names(all_variants))
+all_variants$sample_count = integer(length(all_variants))
+all_variants$sample_count = sample_count[names(all_variants)]
+
+all_variants_filtered = all_variants[all_variants$DP < 200]
+all_variants_filtered_snv = all_variants_filtered[all_variants_filtered$vartype=="SNV"]
+all_variants_filtered_indel = all_variants_filtered[all_variants_filtered$vartype=="Indel"]
+
+```
+
+## Mutations per sample
+
+```{r, fig.width=12, fig.height=8}
+# ggplot(as.data.frame(mcols(all_variants_filtered)), aes(x=SampleDesc, fill=Condition)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs")
+# ggplot(as.data.frame(mcols(all_variants_indels)), aes(x=SampleDesc, fill=Condition)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("InDels")
+
+ggplot(as.data.frame(mcols(all_variants[all_variants$DP<150])), aes(x=sampleID, fill=SampleDesc)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SNVs") + facet_wrap(~vartype, ncol=1, scales = "free_y")
+
+```
+
+<!-- ### Including shared -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- tmp = as.data.table(mcols(all_variants[all_variants$DP<200])) -->
+<!-- tmp$Condition = factor(tmp$Condition) -->
+<!-- tmp$MouseID = factor(tmp$MouseID) -->
+<!-- tmp$vartype = factor(tmp$vartype) -->
+<!-- # tmp2 = tmp[, .(count=.N), by=c("SampleDesc","MouseID","Condition", "vartype")] -->
+<!-- # tmp2[, MouseID:= paste0("Mouse ", MouseID)] -->
+
+<!-- tmp_ed = as.data.table(ed) -->
+<!-- setkey(tmp_ed, "SampleDesc") -->
+
+<!-- tmp2 = as.data.frame(tapply(tmp$SampleDesc, list(tmp$SampleDesc, tmp$vartype), length)) -->
+<!-- tmp2$SampleDesc = rownames(tmp2) -->
+<!-- tmp3 = melt(tmp2, id.vars="SampleDesc" ) -->
+<!-- colnames(tmp3) = c("SampleDesc", "vartype","count") -->
+<!-- tmp3$count = ifelse(is.na(tmp3$count), 0, tmp3$count) -->
+<!-- tmp3$Condition = tmp_ed[tmp3$SampleDesc]$Condition -->
+<!-- tmp3$MouseID = paste0("Mouse ", tmp_ed[tmp3$SampleDesc]$MouseID) -->
+
+
+<!-- # p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) +  -->
+<!-- #   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  +  -->
+<!-- #   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") +  -->
+<!-- #   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") +  -->
+<!-- #   ggtitle("SNVs and InDels") +  -->
+<!-- #   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") -->
+
+<!-- tmp3$ymin = ifelse(tmp3$vartype=="SNV", 30, 0) -->
+<!-- tmp3$ymax = ifelse(tmp3$vartype=="SNV", 170, 7) -->
+
+
+<!-- p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) + -->
+<!--   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") + -->
+<!--   ggtitle("SNVs and InDels") + -->
+<!--   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") +  -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- pdf(file="SNV_Indel_Frequencies.pdf", height=8, width=12) -->
+<!-- print(p) -->
+<!-- dev.off() -->
+
+
+<!-- ``` -->
+
+
+<!-- ```{r, fig.width=10, fig.height=6} -->
+<!-- tmp3$class = paste( tmp3$MouseID,  tmp3$Condition) -->
+<!-- tmp3$vartype = factor(tmp3$vartype, levels=c("SNV","Indel")) -->
+<!-- p = ggplot(tmp3, aes(x=MouseID, y = count, fill=Condition)) + -->
+<!--   geom_dotplot(position="dodge", binaxis='y', stackdir='center', dotsize = 1.2)  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=95, size=12, position = position_dodge(0.9)) + -->
+<!--   theme_bw() + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=16)) + -->
+<!--   scale_fill_manual(values=c("grey","red")) + -->
+<!--   ggtitle("SNVs and InDels") + xlab("") + ylab("Variant count") + -->
+<!--   facet_wrap(vartype ~ ., nrow=1, scales = "free_y") + -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- cairo_pdf(file="SNV_Indel_Frequencies_v2.pdf", height=6, width=8) -->
+<!-- print(p) -->
+<!-- dev.off() -->
+
+<!-- write.table(tmp3[, c("SampleDesc","vartype","count","Condition","MouseID")], file="SNV_Indel_Frequencies_table.txt", sep="\t", row.names = F, quote=F) -->
+<!-- ``` -->
+
+
+<!-- ### Excluding shared -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- tmp = as.data.table(mcols(all_variants[all_variants$DP<150 & all_variants$sample_count==1])) -->
+<!-- tmp$Condition = factor(tmp$Condition) -->
+<!-- tmp$MouseID = factor(tmp$MouseID) -->
+<!-- tmp$vartype = factor(tmp$vartype) -->
+<!-- # tmp2 = tmp[, .(count=.N), by=c("SampleDesc","MouseID","Condition", "vartype")] -->
+<!-- # tmp2[, MouseID:= paste0("Mouse ", MouseID)] -->
+
+<!-- tmp_ed = as.data.table(ed) -->
+<!-- setkey(tmp_ed, "SampleDesc") -->
+
+<!-- tmp2 = as.data.frame(tapply(tmp$SampleDesc, list(tmp$SampleDesc, tmp$vartype), length)) -->
+<!-- tmp2$SampleDesc = rownames(tmp2) -->
+<!-- tmp3 = melt(tmp2, id.vars="SampleDesc" ) -->
+<!-- colnames(tmp3) = c("SampleDesc", "vartype","count") -->
+<!-- tmp3$count = ifelse(is.na(tmp3$count), 0, tmp3$count) -->
+<!-- tmp3$Condition = tmp_ed[tmp3$SampleDesc]$Condition -->
+<!-- tmp3$MouseID = paste0("Mouse ", tmp_ed[tmp3$SampleDesc]$MouseID) -->
+
+
+<!-- # p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) +  -->
+<!-- #   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  +  -->
+<!-- #   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") +  -->
+<!-- #   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") +  -->
+<!-- #   ggtitle("SNVs and InDels") +  -->
+<!-- #   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") -->
+
+<!-- tmp3$ymin = ifelse(tmp3$vartype=="SNV", 30, 0) -->
+<!-- tmp3$ymax = ifelse(tmp3$vartype=="SNV", 170, 7) -->
+
+
+<!-- p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) + -->
+<!--   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") + -->
+<!--   ggtitle("SNVs and InDels") + -->
+<!--   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") +  -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- # pdf(file="SNV_Indel_Frequencies.pdf", height=8, width=12) -->
+<!-- # print(p) -->
+<!-- # dev.off() -->
+
+
+<!-- ``` -->
+
+
+<!-- ```{r, fig.width=12, fig.height=6} -->
+<!-- tmp3$class = paste( tmp3$MouseID,  tmp3$Condition) -->
+<!-- tmp3$vartype = factor(tmp3$vartype, levels=c("SNV","Indel")) -->
+<!-- p = ggplot(tmp3, aes(x=MouseID, y = count, fill=Condition)) + -->
+<!--   geom_dotplot(position="dodge", binaxis='y', stackdir='center', dotsize = 1.5)  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=95, size=20, position = position_dodge(0.9)) + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20)) + -->
+<!--   ggtitle("SNVs and InDels") + xlab("") + ylab("Variant count") + -->
+<!--   facet_wrap(vartype ~ ., nrow=1, scales = "free_y") + -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- ``` -->
+
+<!-- ### Shared only in WI -->
+
+<!-- ```{r, fig.width=12, fig.height=8} -->
+<!-- tmp = as.data.table(mcols(all_variants[all_variants$DP<150 & (all_variants$Condition == "Uninfected" | (all_variants$Condition =="Wnt-independent" & all_variants$sample_count>1))])) -->
+<!-- tmp$Condition = factor(tmp$Condition) -->
+<!-- tmp$MouseID = factor(tmp$MouseID) -->
+<!-- tmp$vartype = factor(tmp$vartype) -->
+<!-- # tmp2 = tmp[, .(count=.N), by=c("SampleDesc","MouseID","Condition", "vartype")] -->
+<!-- # tmp2[, MouseID:= paste0("Mouse ", MouseID)] -->
+
+<!-- tmp_ed = as.data.table(ed) -->
+<!-- setkey(tmp_ed, "SampleDesc") -->
+
+<!-- tmp2 = as.data.frame(tapply(tmp$SampleDesc, list(tmp$SampleDesc, tmp$vartype), length)) -->
+<!-- tmp2$SampleDesc = rownames(tmp2) -->
+<!-- tmp3 = melt(tmp2, id.vars="SampleDesc" ) -->
+<!-- colnames(tmp3) = c("SampleDesc", "vartype","count") -->
+<!-- tmp3$count = ifelse(is.na(tmp3$count), 0, tmp3$count) -->
+<!-- tmp3$Condition = tmp_ed[tmp3$SampleDesc]$Condition -->
+<!-- tmp3$MouseID = paste0("Mouse ", tmp_ed[tmp3$SampleDesc]$MouseID) -->
+
+
+<!-- # p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) +  -->
+<!-- #   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  +  -->
+<!-- #   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") +  -->
+<!-- #   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") +  -->
+<!-- #   ggtitle("SNVs and InDels") +  -->
+<!-- #   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") -->
+
+<!-- tmp3$ymin = ifelse(tmp3$vartype=="SNV", 30, 0) -->
+<!-- tmp3$ymax = ifelse(tmp3$vartype=="SNV", 170, 7) -->
+
+
+<!-- p = ggplot(tmp3, aes(x=Condition, y = count, fill=Condition, group=Condition)) + -->
+<!--   geom_dotplot(binaxis='y', stackdir='center', dotsize = 2, fill="red")  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=17, size=4, color="black") + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20), legend.position="none") + -->
+<!--   ggtitle("SNVs and InDels") + -->
+<!--   facet_wrap(vartype ~ MouseID, nrow=2, scales = "free_y") +  -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- # pdf(file="SNV_Indel_Frequencies.pdf", height=8, width=12) -->
+<!-- # print(p) -->
+<!-- # dev.off() -->
+
+
+<!-- ``` -->
+
+
+<!-- ```{r, fig.width=12, fig.height=6} -->
+<!-- tmp3$class = paste( tmp3$MouseID,  tmp3$Condition) -->
+<!-- tmp3$vartype = factor(tmp3$vartype, levels=c("SNV","Indel")) -->
+<!-- p = ggplot(tmp3, aes(x=MouseID, y = count, fill=Condition)) + -->
+<!--   geom_dotplot(position="dodge", binaxis='y', stackdir='center', dotsize = 1.5)  + -->
+<!--   stat_summary(fun.y="mean", geom="point", shape=95, size=20, position = position_dodge(0.9)) + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1), text = element_text(size=20)) + -->
+<!--   ggtitle("SNVs and InDels") + xlab("") + ylab("Variant count") + -->
+<!--   facet_wrap(vartype ~ ., nrow=1, scales = "free_y") + -->
+<!--   geom_blank(aes(y = ymin)) + -->
+<!--   geom_blank(aes(y = ymax)) -->
+
+<!-- print(p) -->
+
+<!-- ``` -->
+
+
+## Nucleotide changes 
+
+```{r}
+
+gr = all_variants_filtered_snv
+mut_df <- data.frame(Sample = gr$sampleID,
+  chr = paste("chr",gsub("MT","M",seqnames(gr)), sep=""),
+  pos = start(gr),
+  ref = gr$REF, 
+  alt = gr$alt_allele )
+
+#head(mut_df)
+sigs.input = mut.to.sigs.input(mut_df, sample.id = "Sample", chr="chr", pos="pos", ref="ref", alt="alt", bsg=BSgenome.Hsapiens.UCSC.hg19)
+```
+
+```{r}
+nuc_changes = apply(sigs.input, 1, function(x) tapply(x, factor(substr(colnames(sigs.input), 3,5)), sum))
+nuc_changes_ts = melt(nuc_changes)
+colnames(nuc_changes_ts) = c("NucleotideChange", "Sample","Count")
+nuc_changes_ts$Condition = ed[nuc_changes_ts$Sample, "Condition"]
+
+ggplot(nuc_changes_ts, aes(x=Sample, y=Count, fill=NucleotideChange)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplot(nuc_changes_ts, aes(x=Sample, y=Count, fill=NucleotideChange)) + geom_bar(position = "fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent)
+
+```
+
+
+## Trinucleotide changes
+
+```{r, fig.width=16, fig.height=8}
+row_anno = ed[,c("SampleDesc" ), drop=F]
+rownames(row_anno) = ed$SampleID
+
+
+pheatmap(sigs.input, cluster_cols = F, annotation_row = row_anno)
+```
+
+
+<!-- ```{r, fig.width=16, fig.height=8} -->
+<!-- pdf(file="Trinucleotide_changes_heatmap.pdf", width=12, height=6) -->
+
+<!-- pheatmap(sigs.input, cluster_cols = F, cluster_rows=F, fontsize_col = 6) -->
+
+<!-- dev.off() -->
+<!-- ``` -->
+
+
+# Shared variants
+
+## All shared variants
+
+```{r}
+table(all_variants_filtered$sample_count)
+```
+
+```{r, fig.width=12, fig.height=8}
+var_mat = table(names(all_variants_filtered), all_variants_filtered$sampleID)
+pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation")
+```
+
+## Shared SNV
+
+```{r, fig.width=12, fig.height=8}
+var_mat = table(names(all_variants_filtered_snv), all_variants_filtered_snv$sampleID)
+pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation")
+```
+
+
+## Shared InDel
+
+```{r, fig.width=12, fig.height=8}
+var_mat = table(names(all_variants_filtered_indel), all_variants_filtered_indel$sampleID)
+pheatmap(var_mat, scale="none", show_rownames = FALSE, cluster_cols=F, clustering_distance_rows = "correlation")
+```
+
+# Mutation sites
+
+```{r}
+all_variants_filtered_annotated = merge(all_variants_filtered, anno_unique_sites_highest_impact, by.x="varID", by.y="varID", all.x=T)
+```
+
+
+## Overview
+
+### Annotation Type
+
+
+```{r}
+nr = elementNROWS(all_variants_filtered_annotated$AnnotationType)
+at_mat = table(unlist(all_variants_filtered_annotated$AnnotationType), rep(all_variants_filtered_annotated$sampleID, nr))
+
+
+t(at_mat)
+```
+
+```{r, fig.width=12, fig.height = 8}
+tmp = melt(at_mat)
+colnames(tmp) = c("AnnotationType","Sample","Count")
+ggplot(tmp, aes(x=Sample, y=Count, fill=AnnotationType))  + geom_bar(position="fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent)
+
+```
+
+
+### Impact
+
+
+```{r}
+impact_tab_ts = melt(table(all_variants_filtered_annotated$HighestImpact, all_variants_filtered_annotated$sampleID))
+colnames(impact_tab_ts) = c("Impact","Sample","Count")
+impact_tab_ts$Impact = factor(impact_tab_ts$Impact, levels=c("HIGH","MODERATE","LOW","MODIFIER"))
+ggplot(impact_tab_ts, aes(x=Sample, y=Count, fill=Impact))  + geom_bar(position="fill",stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_y_continuous(labels = scales::percent)
+```
+
+
+# Rainfall plots
+
+```{r, message=FALSE, warning=FALSE}
+ucsc <- function (x) 
+{
+    suppressMessages(seqlevelsStyle(x) <- "UCSC")
+    genome(x) = NA
+    return(x)
+}
+
+ncbi <- function (x) 
+{
+    suppressMessages(seqlevelsStyle(x) <- "NCBI")
+    genome(x) = NA
+    return(x)
+}
+
+
+gr = all_variants_filtered_snv
+som_vr = VRanges(
+  seqnames = seqnames(gr),
+  ranges = ranges(gr),
+  ref = gr$REF,
+  alt = unstrsplit(CharacterList(gr$ALT),","),
+  sampleNames = gr$sampleID,
+  seqinfo = seqinfo(gr))
+som_vr_ucsc = ucsc(som_vr)
+som_vr_ucsc <- keepSeqlevels(som_vr_ucsc, seqlevels(som_vr_ucsc)[1:24])
+vr_motifs = mutationContext(som_vr_ucsc, BSgenome.Hsapiens.UCSC.hg19, unify = TRUE)
+
+```
+
+```{r}
+input = ncbi(vr_motifs)
+#seqinfo(input) = seqinfo(all_region_results_ML)
+samples = sort(unique(sampleNames(input)))
+for(sa in samples) {
+    print(plotRainfall(input[sampleNames(input) ==sa], group="alteration", main=sa))
+}
+```
+

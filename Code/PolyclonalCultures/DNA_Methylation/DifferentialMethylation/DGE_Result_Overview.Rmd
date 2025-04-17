@@ -35,6 +35,47 @@ all_hypo_cpg <- list()
 ```
 
 
+# IM vs. NON_IM
+
+```{r}
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+im_nonim_results <- all_results_betas_annotated[["IMvsNonIM"]]
+im_nonim_results$gene_symbol = strsplit(im_nonim_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste0(sort(unique(x)), collapse=",") )
+```
+
+We use |log2FC| > 0.2 and FDR < 5% as thresholds to select hyper- and hypomethylated CpGs
+
+```{r}
+tmp = im_nonim_results
+
+hyper_cpg = subset(tmp, logFC > 0.20 & adj.P.Val < 0.05)
+hyper_genes = unique(unlist(strsplit(hyper_cpg$UCSC_RefGene_Name, ";")))
+
+hypo_cpg = subset(tmp, logFC < -0.2 & adj.P.Val < 0.05)
+hypo_genes = unique(unlist(strsplit(hypo_cpg$UCSC_RefGene_Name, ";")))
+
+n = "IM_vs_non-IM"
+all_hyper_cpg[[n]] <- hyper_cpg
+all_hypo_cpg[[n]] <- hypo_cpg
+```
+
+We identified `r length(hyper_genes)` hypermethylated and `r length(hypo_genes)` hypomethylated genes. 
+
+## Most frequently hypermethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=8}
+par(mar=c(5,10,4,1))
+with(subset(hyper_cpg, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypermethylated genes")
+```
+
+
+## Most frequently hypomethylated genes (Top 50)
+
+```{r, fig.width=5, fig.height=8}
+par(mar=c(5,10,4,1))
+with(subset(hypo_cpg, gene_symbol!="") |> order_df("logFC"), table(gene_symbol) |> sort(decreasing = F)) |> tail(50) |> barplot(las=2, cex.names=.6, horiz=T, main="Most frequently hypomethylated genes")
+```
+
 
 
 
@@ -42,7 +83,7 @@ all_hypo_cpg <- list()
 
 
 ```{r}
-load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+#load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
 im_nonim_healthy_results <- all_results_betas_annotated[["IMvsNormalAntrum"]]
 im_nonim_healthy_results$gene_symbol = strsplit(im_nonim_healthy_results$UCSC_RefGene_Name, ";") |> sapply(function(x) paste(sort(unique(x)), collapse=",") )
 ```
@@ -187,7 +228,7 @@ sel_comparisons = names(all_hyper_cpg)
 ```{r, fig.height=6, fig.width=6}
 grid.newpage()
 x <- venn.diagram(lapply(all_hyper_cpg[sel_comparisons], function(x) x$Row.names), filename = NULL, disable.logging = T, euler.d=T, 
-                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  fill = c("cornflowerblue", "green", "darkorchid1", "yellow2"),
                   cat.cex = .7)
 grid.draw(x)
 ```
@@ -200,7 +241,7 @@ grid.draw(x)
 grid.newpage()
 inp <- lapply(all_hyper_cpg[sel_comparisons], function(x) {unique(x$gene_symbol) |> (\(c) c[c!=""])() })
 x <- venn.diagram(inp, filename = NULL, disable.logging = T, euler.d=T, 
-                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  fill = c("cornflowerblue", "green", "darkorchid1", "yellow2"),
                   cat.cex = .7)
 grid.draw(x)
 ```
@@ -221,7 +262,6 @@ for (n in sel_comparisons) {
 }
 
 intersecting_genes |> sort()
-
 ```
 
 
@@ -231,7 +271,7 @@ intersecting_genes |> sort()
 ```{r, fig.height=6, fig.width=6}
 grid.newpage()
 x <- venn.diagram(lapply(all_hypo_cpg[sel_comparisons], function(x) x$Row.names), filename = NULL, disable.logging = T, euler.d=T, 
-                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  fill = c("cornflowerblue", "green", "darkorchid1", "yellow2"),
                   cat.cex = .7)
 grid.draw(x)
 ```
@@ -244,7 +284,7 @@ grid.draw(x)
 grid.newpage()
 inp <- lapply(all_hypo_cpg[sel_comparisons], function(x) {unique(x$gene_symbol) |> (\(c) c[c!=""])() })
 x <- venn.diagram(inp, filename = NULL, disable.logging = T, euler.d=T, 
-                  fill = c("cornflowerblue", "green", "darkorchid1"),
+                  fill =c("cornflowerblue", "green", "darkorchid1", "yellow2"),
                   cat.cex = .7)
 grid.draw(x)
 ```
@@ -332,7 +372,6 @@ grid.draw(x)
 ```
 
 
-
 ## Hypomethylated genes
 
 ```{r, fig.height=6, fig.width=6}
@@ -359,3 +398,10 @@ for (n in sel_comparisons) {
 
 intersecting_genes |> sort()
 ```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+

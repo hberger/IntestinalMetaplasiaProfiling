@@ -1,0 +1,418 @@
+---
+title: "Stomach Methylation - Preprocessing and QC"
+author: "Hilmar Berger, based on code by Kristin Fritsche"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+
+```{r, warning=FALSE, message=FALSE}
+library(pheatmap)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+library(RColorBrewer)
+library(readxl)
+
+# 
+# result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+# if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/PolyclonalCultures/DNAm"
+#if (!file.exists(data_storage_folder)) dir.create(data_storage_folder, recursive=T)
+
+
+```
+
+# Overview
+
+We here use the averaged WGBS data from WGBS atlas and the methylation array data from Kristin Fritsches ALI stomach samples to compare array and WGBS in stomach antrum. 
+
+
+```{r}
+load(file.path(data_storage_folder,"myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData") )
+
+ed$sample_label <- ifelse(substr(ed$Sample_ID,1,1)=="M", paste0(ed$Sample_Group, "_", ed$PatientID), ed$Sample_ID)
+
+
+
+antrum_array <- myNorm_anno_sorted[, c("23-AU","24-AU","26-AU", "23-AD","24-AD", "26-AD")]
+antrum_avg <- rowMeans(antrum_array)
+
+corpus_avg <- myNorm_anno_sorted[, c("23-CU","24-CU","26-CU", "23-CD","24-CD", "26-CD")] |> rowMeans()
+
+fundus_array <- myNorm_anno_sorted[, c("23-FU","24-FU","26-FU", "23-FD","24-FD", "26-FD")]
+fundus_avg <- rowMeans(fundus_array)
+
+im_samples <- subset(ed, ed$Sample_Group=="IM")$Sample_ID
+nonim_samples <- subset(ed, ed$Sample_Group=="NON_IM")$Sample_ID
+
+
+im_avg <- myNorm_anno_sorted[, im_samples] |> rowMeans()
+nonim_avg <- myNorm_anno_sorted[, nonim_samples] |> rowMeans()
+ 
+
+
+```
+
+```{r}
+wgbs <- readRDS(file=file.path("../../../../Data/Processed/WGBS", "WGS_Cpg_Meth_avg_beta_11organs.rds"))
+wgbs <- wgbs[!is.na(wgbs$ilmn_id), ]
+```
+
+
+```{r}
+comb_data <- wgbs
+comb_data$antrum_array <- antrum_avg[wgbs$ilmn_id]
+comb_data$corpus_array <- corpus_avg[wgbs$ilmn_id]
+comb_data$fundus_array <- fundus_avg[wgbs$ilmn_id]
+comb_data$im_array <- im_avg[wgbs$ilmn_id]
+comb_data$nonim_array <- nonim_avg[wgbs$ilmn_id]
+comb_data <- comb_data[!is.na(comb_data$antrum_array), ]
+rownames(comb_data) <- comb_data$ilmn_id
+```
+
+```{r}
+#sel_samples <- c("Gastric.antrum","Gastric.body","Gastric.fundus","Small.int", "Colon.Left", "Colon.Right","antrum_array", "corpus_array","fundus_array", "nonim_array", "im_array")
+sel_samples = colnames(comb_data)
+sel_samples = sel_samples[!sel_samples %in% c("ilmn_id","chr","pos")]
+```
+
+
+# Global correlation
+
+```{r}
+cc <- cor(as.matrix(comb_data[,sel_samples]), method="spearman")
+
+pheatmap(cc)
+```
+
+<!-- # Differences vs. WGBS Antrum -->
+
+
+<!-- ```{r} -->
+<!-- diffs <- sweep(comb_data[,sel_samples], 1, comb_data$Gastric.antrum, "-") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- cc <- cor(diffs[, colnames(diffs) != "Gastric.antrum"], method="spearman") -->
+
+<!-- pheatmap(cc) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- colSums(diffs) |> sort() -->
+<!-- ``` -->
+
+
+<!-- # Differences vs. Array Antrum -->
+
+
+<!-- ```{r} -->
+<!-- diffs <- sweep(comb_data[sel_samples], 1, comb_data$antrum_array, "-") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- cc <- cor(diffs[, colnames(diffs) != "antrum_array"], method="spearman") -->
+
+<!-- pheatmap(cc) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- colSums(diffs) |> sort() -->
+<!-- colSums(abs(diffs)) |> sort() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- diffs2 <- diffs |> (\(x) {x[x<0.2] <- 0; x})() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- cc <- cor(diffs2[, colnames(diffs2) != "antrum_array"], method="spearman") -->
+
+<!-- pheatmap(cc) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- colSums(diffs2) |> sort() -->
+<!-- colSums(abs(diffs2)) |> sort() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- apply(abs(diffs2) > 0.2, 2, sum) -->
+<!-- ``` -->
+
+
+## All array samples 
+
+```{r}
+#all_array_samples <- myNorm_anno_sorted[, grepl("-AU|-AD|-CU|-CD|-FU|-FD|im_|nonim_",colnames(myNorm_anno_sorted))]
+#all_array_samples$ID <- rownames(all_array_samples)
+#all_samples <- merge(wgbs[, c(colnames(wgbs)[1:14],"ilmn_id")], all_array_samples, by.x="ilmn_id", by.y="ID")
+all_samples <- comb_data[, sel_samples]
+```
+
+
+```{r}
+## modify mdsPlot function to not show the legend
+
+my_mdsPlot = function (dat, numPositions = 1000, sampNames = NULL, sampGroups = NULL, 
+          xlim, ylim, pch = 1, pal = brewer.pal(8, "Dark2"), legendPos = "bottomleft", 
+          legendNCol, main = NULL) 
+{
+  if (is(dat, "matrix")) {
+    b <- dat
+    if (is.null(main)) 
+      main <- sprintf("MDS\n%d most variable positions", 
+                      numPositions)
+  }
+  else {
+    stop("dat must be an 'MethylSet' or 'matrix'.")
+  }
+  o <- order(-matrixStats::rowVars(b))[1:numPositions]
+  d <- dist(t(b[o, ]))
+  fit <- cmdscale(d)
+  if (missing(xlim)) 
+    xlim <- range(fit[, 1]) * 1.2
+  if (missing(ylim)) 
+    ylim <- range(fit[, 2]) * 1.2
+  if (is.null(sampGroups)) 
+    sampGroups <- rep(1, numPositions)
+  sampGroups <- as.factor(sampGroups)
+  col <- pal[sampGroups]
+  if (is.null(sampNames)) {
+    plot(fit[, 1], fit[, 2], col = col, pch = pch, xlim = xlim, 
+         ylim = ylim, xlab = "First dimension", ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+  }
+  else {
+    plot(0, 0, type = "n", xlim = xlim, ylim = ylim, xlab = "First dimension", 
+         ylab = "Second dimension", main = main, cex.axis = 0.8, cex.lab = 0.8)
+    text(fit[, 1], fit[, 2], sampNames, col = col)
+  }
+  if(legendPos!="none") {
+    legend(legendPos, legend = levels(sampGroups), fill=pal[1:length(unique(sampGroups))])  
+  }
+  
+}
+
+```
+
+
+```{r MDS plot, fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 2:ncol(all_samples)])
+sample_groups = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "antrum_array"="Antrum",
+                  "corpus_array"="Corpus",
+                  "fundus_array" = "Fundus",
+                  "im_array" = "IM",
+                  "nonim_array" = "Non-IM")
+
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomright")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomright")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomright")
+```
+
+
+## Only stomach
+
+```{r}
+#all_array_samples <- myNorm_anno_sorted[, grepl("-AU|-AD|-CU|-CD|-FU|-FD|im_|nonim_",colnames(myNorm_anno_sorted))]
+#all_array_samples$ID <- rownames(all_array_samples)
+#all_samples <- merge(wgbs[, c(colnames(wgbs)[1:14],"ilmn_id")], all_array_samples, by.x="ilmn_id", by.y="ID")
+all_samples <- comb_data[, c("Gastric.antrum","Gastric.fundus","Gastric.body","antrum_array","corpus_array","fundus_array","im_array","nonim_array")]
+```
+
+
+```{r  fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+sample_groups = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "antrum_array"="Antrum",
+                  "corpus_array"="Corpus",
+                  "fundus_array" = "Fundus",
+                  "im_array" = "IM",
+                  "nonim_array" = "Non-IM")
+
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomright")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topleft")
+```
+
+
+## Only stomach + intestine
+
+```{r}
+#all_array_samples <- myNorm_anno_sorted[, grepl("-AU|-AD|-CU|-CD|-FU|-FD|im_|nonim_",colnames(myNorm_anno_sorted))]
+#all_array_samples$ID <- rownames(all_array_samples)
+#all_samples <- merge(wgbs[, c(colnames(wgbs)[1:14],"ilmn_id")], all_array_samples, by.x="ilmn_id", by.y="ID")
+all_samples <- comb_data[, c("Gastric.antrum","Gastric.fundus","Gastric.body","antrum_array","corpus_array","fundus_array","im_array","nonim_array","Small.int", "Colon.Left","Colon.Right")]
+```
+
+
+```{r fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+sample_groups = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "antrum_array"="Antrum",
+                  "corpus_array"="Corpus",
+                  "fundus_array" = "Fundus",
+                  "im_array" = "IM",
+                  "nonim_array" = "Non-IM")
+
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+```
+
+## Only stomach + intestine + pancreas
+
+```{r}
+#all_array_samples <- myNorm_anno_sorted[, grepl("-AU|-AD|-CU|-CD|-FU|-FD|im_|nonim_",colnames(myNorm_anno_sorted))]
+#all_array_samples$ID <- rownames(all_array_samples)
+#all_samples <- merge(wgbs[, c(colnames(wgbs)[1:14],"ilmn_id")], all_array_samples, by.x="ilmn_id", by.y="ID")
+all_samples <- comb_data[, c("Gastric.antrum","Gastric.fundus","Gastric.body","antrum_array","corpus_array","fundus_array","im_array","nonim_array","Small.int", "Colon.Left","Colon.Right", "Pancreas")]
+```
+
+
+```{r fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+sample_groups = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "antrum_array"="Antrum",
+                  "corpus_array"="Corpus",
+                  "fundus_array" = "Fundus",
+                  "im_array" = "IM",
+                  "nonim_array" = "Non-IM")
+
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+```
+
+# Individual samples
+
+
+```{r}
+sample_groups2 = c("Colon.Left"="Intestine WGBS",
+                  "Colon.Right"="Intestine WGBS",
+                  "Small.int"="Intestine WGBS",
+                  "Gastric.antrum"="Antrum",
+                  "Gastric.body"="Corpus",
+                  "Gastric.fundus"="Fundus",
+                  "antrum_array"="Antrum",
+                  "corpus_array"="Corpus",
+                  "Breast.Basal"="Breast",
+                  "Esophagus" = "Esophagus",
+                  "Gallbladder" = "Gallbladder",
+                  "Kindey.Tubular" = "Kidney",
+                  "Liver" = "Liver",
+                  "Lung.Alveolar" = "Lung",
+                  "Pancreas" = "Pancreas",
+                  "Prostate" = "Prostate",
+                  "fundus_array" = "Fundus")
+```
+
+
+```{r}
+comb_data2 <- wgbs
+comb_data2$antrum_array <- antrum_avg[wgbs$ilmn_id]
+comb_data2$corpus_array <- corpus_avg[wgbs$ilmn_id]
+comb_data2$fundus_array <- fundus_avg[wgbs$ilmn_id]
+for (s in im_samples) {
+  comb_data2[[paste0("IM_",s)]] <- myNorm_anno_sorted[match(comb_data2$ilmn_id, rownames(myNorm_anno_sorted)),s]
+  sample_groups2[paste0("IM_",s)] <- "IM"
+}
+for (s in nonim_samples) {
+  comb_data2[[paste0("Non_IM_",s)]] <- myNorm_anno_sorted[match(comb_data2$ilmn_id, rownames(myNorm_anno_sorted)),s]
+  sample_groups2[paste0("Non_IM_",s)] <- "Non-IM"
+}
+comb_data2 <- comb_data2[!is.na(comb_data2$antrum_array), ]
+rownames(comb_data2) <- comb_data2$ilmn_id
+```
+
+
+
+
+## Only stomach
+
+```{r}
+cc <- colnames(comb_data2)[!colnames(comb_data2) %in% c("ilmn_id","chr","pos")]
+sel_samples <- cc[!is.na(sample_groups2[cc]) & sample_groups2[cc] %in% c("Antrum","Corpus","Fundus","IM","Non-IM")]
+all_samples <- comb_data2[, sel_samples]
+```
+
+
+```{r  fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "bottomright")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topright")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "topleft")
+```
+
+
+
+```{r}
+cc <- colnames(comb_data2)[!colnames(comb_data2) %in% c("ilmn_id","chr","pos")]
+sel_samples <- cc[!is.na(sample_groups2[cc]) & sample_groups2[cc] %in% sample_groups2[cc] |> unique()]
+all_samples <- comb_data2[, sel_samples]
+```
+
+
+```{r  fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+```
+
+## Only stomach + intestine
+
+```{r}
+cc <- colnames(comb_data2)[!colnames(comb_data2) %in% c("ilmn_id","chr","pos")]
+sel_samples <- cc[!is.na(sample_groups2[cc]) & sample_groups2[cc] %in% c("Antrum","Corpus","Fundus","IM","Non-IM", "Intestine WGBS")]
+all_samples <- comb_data2[, sel_samples]
+```
+
+
+```{r  fig.width=6, fig.height=5}
+tmp <- as.matrix(all_samples[, 1:ncol(all_samples)])
+
+my_mdsPlot(tmp, numPositions = 1000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+my_mdsPlot(tmp, numPositions = 5000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+my_mdsPlot(tmp, numPositions = 10000, sampGroups = sample_groups2[colnames(tmp)], sampNames = colnames(tmp), legendPos = "none")
+```
+
+# Software versions
+
+```{r}
+sessionInfo()
+```
+
