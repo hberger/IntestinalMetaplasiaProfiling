@@ -1,6 +1,6 @@
 ---
 title: "Locus Overlap Analysis (LOLA) with core and extended data base on CpG level,IM + Non-IM and healthy stomach samples"
-author: "Kristin Fritsche + Hilmar Berger"
+author: "Hilmar Berger"
 output: 
  html_document:
     toc: true

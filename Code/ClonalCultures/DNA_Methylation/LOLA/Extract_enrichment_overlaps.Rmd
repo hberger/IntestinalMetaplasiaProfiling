@@ -1,0 +1,192 @@
+---
+title: "Extract enrichment overlaps from LOLA results - ESGIv2 IM vs healthy"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+library(scales)
+library(ggplot2)
+library(reshape2)
+
+library(LOLA)
+library(GenomicRanges)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm/"
+
+```
+
+
+# Data
+
+LOLA was performed for DM, hyper-, and hypomethylated Cgs between the stomach regions using all Cgs of the normalized data set as the universe.
+
+```{r}
+env = new.env()
+load("../../../../Data/Processed/ClonalCultures/DNAm/LOLA_Core_results.Rdata", envir = env)
+lola_results_core <- get("all_results_lola", env)
+
+load("../../../../Data/Processed/ClonalCultures/DNAm/LOLA_Ext_results.Rdata", envir = env)
+lola_results_ext <- get("all_results_lola", env)
+
+```
+
+```{r}
+load(file.path(data_storage_folder, "all_results_betas_IM_nonIM_with_healthy_annotated.RData") )
+load(file.path(data_storage_folder, "myNorm_IM_nonIM_and_healthy_stomach_anno_sorted.RData") )
+
+anno = myNorm_anno_sorted[, c("CHR","MAPINFO","Strand","gene","feature","cgi","feat.cgi", "SNP_ID","SNP_DISTANCE" )]
+rm(myNorm_anno_sorted)
+```
+
+
+```{r}
+load(file.path(data_storage_folder, "Methylation_DM_lists.Rdata"))
+```
+
+
+# Enrichment of DM genes in functional / genomic categories
+
+```{r, warning=F, message=F}
+universe = GRanges(as.character(anno$CHR), IRanges(start = anno$MAPINFO, end = anno$MAPINFO))
+
+all_comparisons = list()
+
+for (nn in names(all_hyper_cpg)) {
+  hyper_cpg = all_hyper_cpg[[nn]]
+  hypo_cpg = all_hypo_cpg[[nn]]
+  
+  all_comparisons[[paste(nn, "hyper", sep="_")]] = merge(hyper_cpg, anno, by.x="Row.names", by.y=0)
+  all_comparisons[[paste(nn, "hypo", sep="_")]] = merge(hypo_cpg, anno, by.x="Row.names", by.y=0)
+
+}
+
+all_comparisons = all_comparisons[sapply(all_comparisons, function(x) dim(x)[1]) > 0]
+
+GRanges_fun = function(x){
+  GRanges(as.character(x$CHR), IRanges(start = x$MAPINFO, end = x$MAPINFO))
+}
+
+all_comparisons_GRanges = lapply(all_comparisons, GRanges_fun)
+```
+
+
+```{r}
+# taken from Somatic Signatures
+ucsc <- function(x) {
+    suppressMessages(seqlevelsStyle(x) <- "UCSC") ## '<-' needed
+    genome(x) = NA ## avoid mismatches in 'genome' slots for overlaps
+    return(x)
+}
+```
+
+```{r}
+anno_ranges <- GRanges(seqnames = as.character(anno$CHR), IRanges(anno$MAPINFO, anno$MAPINFO), index=1:nrow(anno)) |> ucsc()
+```
+
+
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/regions/LOLAExt/hg19"
+regionDB_ext = loadRegionDB(dbPath, useCache = T)
+```
+
+
+```{r, warning=F, message=F}
+dbPath = "../../../../Data/ExtData/LOLA/regions/LOLACore/hg19"
+regionDB_core = loadRegionDB(dbPath, useCache = T)
+```
+
+
+```{r}
+sel_labels <- c("AP1","FOXL1","Pdx1","PBX1","ARID3A","SP1","E2F1","ELK4","Egr1","GABPA","MIZF","CTCF","GATA2","CREB1","NF-kappaB","Klf4","FOXA1",
+                "UCSC Vista enhancers","UCSC LaminB1 Lads","UCSC Switch DB TSSs","UCSC CpG islands","UCSC Simple repeats",
+                "ChIP HeLa-S3 c-Jun","ChIP HeLa-S3 c-Fos","ChIP HeLa-S3 JunD","ChIP H1-hESC SUZ12","ChIP H1-hESC EZH2_(39875)","ChIP HeLa-S3 STAT3",
+                "ChIP GM18951 Pol2","ChIP HeLa-S3 Pol2","ChIP K562 Pol2",
+                "Repressed Segments_HeLa-S3","Repressed Segments_H1hesc","TSS Segments_HeLa-S3","TSS Segments_H1hesc","TSS segments_K562","Repressed Segments_Huvec","TSS Segments_Huvec",
+                "Leukemia Cell_FOS","Leukemia Cell_FOSB","Embryonic Stem Cell_EZH2","Embryonic Stem Cell_SUZ12","Embryonic Stem Cell_SOX2","Embryonic Stem Cell_SMAD3",
+                "Caco-2(differentiated) GATA6","Caco-2(differentiated) HNF4A","Caco-2(differentiated) CDX2", "HepG2 liver cells HNF4A")
+```
+
+
+```{r}
+extract_anno <- function(sel_row, user_sets, region_db)  {
+  tmp <- extractEnrichmentOverlaps(locResult = sel_row, 
+                          userSets = ucsc(user_sets), 
+                          regionDB = region_db)
+
+  if(length(tmp) > 0) {
+    tmp <- sort(tmp)  
+    res <- anno[subjectHits(findOverlaps(tmp, anno_ranges)),]
+  } else res <- NULL
+  
+  return(res)
+}
+```
+
+
+```{r}
+all_overlaps <- list()
+```
+
+
+```{r}
+comparison <- "IM_vs_healthy_hypo"
+#res_sel <- lola_results_core[[comparison]] |> (\(x) x[order(x$logOddsRatio, decreasing = T),])() |> (\(x) x[1,])()
+all_overlaps[[comparison]] <- list()
+
+res_sel <- subset(lola_results_ext[[comparison]], grepl("AP1",filename))
+all_overlaps[[comparison]][["AP1"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_ext)
+
+res_sel <- subset(lola_results_core[[comparison]], grepl("UCSC Vista enhancers", description))
+all_overlaps[[comparison]][["Enhancers"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_core)
+
+# ap1_and_enh <- intersect(rownames(cpg_ap1_hypo_anno), rownames(cpg_enh_hypo_anno))
+# ap1_and_enh_anno <- anno[match(ap1_and_enh, rownames(anno)),]
+
+res_sel <- subset(lola_results_core[[comparison]], filename == "wgEncodeAwgTfbsSydhHelas3CjunIggrabUniPk.narrowPeak")
+all_overlaps[[comparison]][["cJUN"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_core)
+
+```
+
+```{r}
+comparison <- "IM_vs_healthy_hyper"
+#res_sel <- lola_results_core[[comparison]] |> (\(x) x[order(x$logOddsRatio, decreasing = T),])() |> (\(x) x[1,])()
+all_overlaps[[comparison]] <- list()
+
+res_sel <- subset(lola_results_ext[[comparison]], grepl("Sox2",filename))
+all_overlaps[[comparison]][["SOX2"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_ext)
+# this contains chr10:128,465,572-130,860,205 with FOXI2, MKI67
+
+res_sel <- subset(lola_results_core[[comparison]], grepl("SMAD3",antibody))
+all_overlaps[[comparison]][["SMAD3"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_core)
+# this contains chr10:128,465,572-130,860,205 with FOXI2, MKI67
+
+res_sel <- subset(lola_results_core[[comparison]], grepl("UCSC Vista enhancers", description))
+all_overlaps[[comparison]][["Enhancer"]] <- extract_anno(res_sel, all_comparisons_GRanges[[comparison]], regionDB_core)
+#library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+#data(Other)
+#oo <- as.data.frame(Other)
+#oo2 <- oo[match(rownames(cpg_enh_hyper_anno), rownames(oo)),]
+```
+
+```{r}
+saveRDS(all_overlaps, file=file.path(result_folder, "Overlaps_Cpg_LOLA_selected_sets.rds"))
+```
+
+

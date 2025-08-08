@@ -66,16 +66,22 @@ dds_selected <- DESeq(dds_selected, fitType="local")
 # Stomach vs. caudal
 ############################################
 
-res <- results(dds_selected, contrast=c("condition2","stomach","large intestine"))
-all_results[["Stomach_vs_LI"]] = res
+# res <- results(dds_selected, contrast=c("condition2","stomach","large intestine"))
+# all_results[["Stomach_vs_LI"]] = res
+
+res <- results(dds_selected, contrast=c("condition2","large intestine","stomach"))
+all_results[["LI_vs_Stomach"]] = res
 
 
 ############################################
 # Stomach vs. cranial intestine
 ############################################
 
-res <- results(dds_selected, contrast=c("condition2","stomach","small intestine"))
-all_results[["Stomach_vs_SI"]] = res
+# res <- results(dds_selected, contrast=c("condition2","stomach","small intestine"))
+# all_results[["Stomach_vs_SI"]] = res
+
+res <- results(dds_selected, contrast=c("condition2","small intestine","stomach"))
+all_results[["SI_vs_Stomach"]] = res
 
 
 ############################################

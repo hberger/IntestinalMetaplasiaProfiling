@@ -1,0 +1,288 @@
+---
+title: "Summary of LOLA results - ESGI, baseline filtered"
+author: "Hilmar Berger"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: false
+    number_sections: true
+    code_folding: hide
+    
+pdf_document:
+    fig_caption: true
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M:%S')`"
+---
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+library(scales)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(data.table)
+
+result_folder = paste("../../../../Results/ClonalCultures/DNAm/baseline_filtered",format(Sys.time(), "%Y-%m-%d"),sep="/")
+if (!file.exists(result_folder)) dir.create(result_folder, recursive=T)
+```
+
+
+# Data
+
+LOLA was performed for DM, hyper-, and hypomethylated Cgs different conditions using all Cgs of the normalized data set as the universe.
+
+
+```{r}
+data_storage_folder = "../../../../Data/Processed/ClonalCultures/DNAm/"
+```
+
+```{r}
+all_result_tabs <- list()
+```
+
+
+```{r}
+transform_tab <- function(x, study, db , comparison) {
+  if(!inherits(x, "data.table")) x <- as.data.table(x)
+  x$study <- study
+  x$DB <- db
+  x$comparison <- comparison
+  x$ID = paste0(x$collection, "_", x$description) |> make.unique()
+  
+  x$OddsRatio <- x$logOddsRatio
+  x$logOddsRatio <- log2(x$OddsRatio)
+
+  x$untreated = with(x, !complete.cases(treatment) | treatment == "None" | treatment == "No treatment" | treatment == "regular medium" | treatment == "serum_starved_media" | treatment == "serum_stimulated_media" | treatment == "full media" | treatment == "mock" | treatment == "No treatment(Antibody RAR _A704)" | treatment == "No treatment(Antibody RXR _sc774)" )
+
+  x$comp_direction <- ifelse(grepl("_hyper$",comparison), "Hyper", ifelse(grepl("_hypo$", comparison), "Hypo", "other") )
+
+  x$comp_ID <- paste0(x$study, "__", x$comparison)
+  x$collection_ID <- paste0(x$DB, "__", x$collection)
+  
+  x[, pos_rank := rank(ifelse(p.adj < 0.05, -logOddsRatio, NA)), by="collection_ID"]
+  x[, neg_rank := rank(ifelse(p.adj < 0.05, logOddsRatio, NA)), by="collection_ID"]
+  
+  return(x)
+}
+```
+
+
+```{r}
+tmp.env <- new.env()
+load(file.path(data_storage_folder, "LOLA_Core_results_baseline_filtered.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "ESGI","LOLA_Core", names(tmp), SIMPLIFY = F)
+all_results <- do.call(rbind, tmp)
+
+load(file.path(data_storage_folder, "LOLA_Ext_results_baseline_filtered.Rdata"), envir = tmp.env)
+tmp <- get("all_results_lola", tmp.env)
+tmp <- mapply(FUN = transform_tab, tmp, "ESGI","LOLA_Ext", names(tmp), SIMPLIFY = F)
+all_results <- rbind(all_results, do.call(rbind, tmp))
+
+all_result_tabs[["ESGI"]] <- all_results
+
+```
+
+
+```{r}
+all_results_final <- do.call(rbind, all_result_tabs)
+rm(tmp.env, all_result_tabs, all_results)
+
+```
+
+
+```{r, fig.width=8, fig.height=6}
+m <-with(subset(all_results_final, p.adj < 0.05), table( comp_ID, collection_ID))
+m
+pheatmap(m, scale="column")
+```
+
+
+
+
+```{r}
+
+all_results_final$label = ifelse(all_results_final$collection %in% c("cistrome_cistrome", "cistrome_epigenome","ucsc_features","sheffield_dnase","encode_tfbs"), gsub("cistrome_cistrome |cistrome_epigenome ", "", all_results_final$description), 
+                   ifelse(all_results_final$collection=="encode_segmentation", paste0(all_results_final$description, "_", all_results_final$cellType),
+                          ifelse(all_results_final$collection == "codex", paste0(all_results_final$cellType, "_", all_results_final$antibody), 
+                                 ifelse(all_results_final$collection == "roadmap_epigenomics", 
+                                        ifelse(all_results_final$description =="roadmap_epigenomics", "DNase", 
+                                               gsub("roadmap_epigenomics ", "", all_results_final$description)), 
+                                        ifelse(all_results_final$description=="jaspar_motifs", 
+                                               gsub("\\.bed","", all_results_final$filename),
+                                               ifelse(all_results_final$collection == "Hpy2D", 
+                                                      gsub(".bed","", all_results_final$filename),  "__MISSING__"  ))))));
+    
+all_results_final$factor = ifelse(all_results_final$collection %in% c("cistrome_cistrome", "cistrome_epigenome","encode_tfbs", "codex"),
+                                  all_results_final$antibody, 
+                                  ifelse(all_results_final$collection=="encode_segmentation", all_results_final$description,
+                                         ifelse(all_results_final$collection == "sheffield_dnase", "DNase", 
+                                                ifelse(all_results_final$collection == "ucsc_features", all_results_final$description,
+                                                       ifelse(all_results_final$collection == "roadmap_epigenomics",
+                                                              ifelse(all_results_final$description =="roadmap_epigenomics", "DNase", all_results_final$antibody), 
+                                                              ifelse(all_results_final$description=="jaspar_motifs", gsub("\\.bed","", all_results_final$filename), 
+                                               ifelse(all_results_final$collection=="Hpy2D",
+                                                      gsub(".bed","",all_results_final$filename),"__MISSING__"  )))))));
+```
+
+```{r}
+all_studies <- unique(all_results_final$study)
+all_comps <- unique(all_results_final$comp_ID)
+```
+
+
+
+```{r}
+sel_collections <- c("LOLA_Core__cistrome_cistrome","LOLA_Core__cistrome_epigenome","LOLA_Core__codex","LOLA_Core__encode_segmentation","LOLA_Core__encode_tfbs","LOLA_Core__ucsc_features","LOLA_Ext__jaspar_motifs")
+```
+
+```{r}
+sel_comparisons <- all_comps
+```
+
+
+<!-- ```{r} -->
+<!-- data_storage_folder_new <- "../../../../Data/Processed/Comparison_CC_PC/" -->
+<!-- if (!file.exists(data_storage_folder_new)) dir.create(data_storage_folder_new, recursive=T) -->
+<!-- tmp <- subset(all_results_final, comp_ID %in% sel_comparisons) -->
+<!-- saveRDS(tmp, file=file.path(data_storage_folder_new, "LOLA_Results_CC_PC_sel_comparisons.rds"), compress=T) -->
+<!-- ``` -->
+
+
+```{r, fig.width=10, fig.height=20}
+for(comp_dir in c("Hyper","Hypo")) {
+  for (sc in sel_collections) {
+    tmp <- subset(all_results_final, p.adj < 0.2 & 
+                     (pos_rank < 20 | neg_rank < 20) &
+                     comp_direction == comp_dir & 
+                     comp_ID %in% sel_comparisons & 
+                     collection_ID == sc)
+    if(nrow(tmp) < 1) next
+
+    df <- reshape2::dcast(tmp, collection_ID + DB + collection + label ~ comp_ID, value.var = "logOddsRatio", fun.aggregate = mean)
+    df$sig_cnt <- rowSums(as.matrix(!is.na(df[, 5:ncol(df)])))
+    
+    #tmp <- subset(df, collection_ID == sc & comp_direction == comp_dir & sig_cnt > 1)
+    if(nrow(df) < 1) next
+    m <- df[, 5:(ncol(df)-1)] |> as.matrix()
+    rownames(m) <- df$label
+    m[is.infinite(m)] <- sign(m[is.infinite(m)]) * 20
+    m2 <- m
+    m2[is.na(m2)] <- 0
+    row_hclust <- hclust(dist(m2), method="mcquitty")
+    col_hclust <- hclust(dist(t(m2)), method="mcquitty")
+    breaks <- c(-20,-10,-5,seq(-2,2,by=4/94),5,10,20)
+    pheatmap(m, main=paste0(sc, "- ", comp_dir), cluster_cols=col_hclust, cluster_rows = row_hclust, breaks=breaks)
+  }
+}
+```
+
+
+
+
+
+
+# Final
+
+
+
+```{r}
+all_results_final_combined <- all_results_final
+all_results_final_combined[, min_pos_rank:=min(pos_rank), by=c("collection_ID","label")]
+all_results_final_combined[, min_neg_rank:=min(neg_rank), by=c("collection_ID","label")]
+
+all_results_final_combined$study_type <- "This study"
+
+sel_comparisons <- all_comps[!all_comps %in% c("ESGI__IM_vs_healthy_450k_and_EPIC_hyper","ESGI__IM_vs_healthy_450k_and_EPIC_hypo")]
+
+all_results_final_combined$comp_type <- ifelse(all_results_final_combined$study == "Published studies","IM vs. Non-IM",
+                                               ifelse(grepl("IM_vs_nonIM|IMvsNonIM",all_results_final_combined$comp_ID), "IM vs. Non-IM","IM vs. Healthy"))
+
+all_results_final_combined$study_type2 <- factor(paste0(all_results_final_combined$study_type, "\n", all_results_final_combined$comp_type), levels=c("This study\nIM vs. Healthy", "This study\nIM vs. Non-IM", "Published studies\nIM vs. Non-IM"))
+
+all_results_final_combined$target_group_type <- ifelse(all_results_final_combined$comp_type == "IM vs. Healthy", ifelse(grepl("nonIM_vs_healthy", all_results_final_combined$comp_ID), "Non-IM","IM"),"IM")
+
+
+```
+
+
+```{r}
+capwords <- function(s, strict = FALSE) {
+    cap <- function(s) paste(toupper(substring(s, 1, 1)),
+                  {s <- substring(s, 2); if(strict) tolower(s) else s},
+                             sep = "", collapse = " " )
+    sapply(strsplit(s, split = " "), cap, USE.NAMES = !is.null(names(s)))
+}
+```
+
+
+```{r, fig.width=12, fig.height=6}
+sel_labels <- c("AP1","FOXL1","Pdx1","PBX1","ARID3A","SP1","E2F1","ELK4","Egr1","GABPA","MIZF","CTCF","GATA2","CREB1","NF-kappaB","Klf4","FOXA1",
+                "UCSC Vista enhancers","UCSC LaminB1 Lads","UCSC Switch DB TSSs","UCSC CpG islands","UCSC Simple repeats",
+                "ChIP HeLa-S3 c-Jun","ChIP HeLa-S3 c-Fos","ChIP HeLa-S3 JunD","ChIP H1-hESC SUZ12","ChIP H1-hESC EZH2_(39875)","ChIP HeLa-S3 STAT3",
+                "ChIP GM18951 Pol2","ChIP HeLa-S3 Pol2","ChIP K562 Pol2",
+                "Repressed Segments_HeLa-S3","Repressed Segments_H1hesc","TSS Segments_HeLa-S3","TSS Segments_H1hesc","TSS segments_K562","Repressed Segments_Huvec","TSS Segments_Huvec",
+                "Leukemia Cell_FOS","Leukemia Cell_FOSB","Embryonic Stem Cell_EZH2","Embryonic Stem Cell_SUZ12","Embryonic Stem Cell_SOX2","Embryonic Stem Cell_SMAD3",
+                "Caco-2(differentiated) GATA6","Caco-2(differentiated) HNF4A","Caco-2(differentiated) CDX2", "HepG2 liver cells HNF4A")
+
+all_results_final_combined_filtered <- subset(all_results_final_combined, label %in% sel_labels)
+
+collection_trans <- c("cistrome_cistrome"="Cistrome","codex" = "Codex",  "encode_segmentation"="ENCODE segm.","encode_tfbs"="Encode TFBS","jaspar_motifs"="JASPAR Motifs","ucsc_features"="UCSC DB")
+tmp <- strsplit(all_results_final_combined_filtered$collection_ID, "__")
+all_results_final_combined_filtered$collection_ID_2 <- sapply(tmp, `[`,2) |> (\(x) collection_trans[x])()
+
+for(comp_dir in c("Hyper","Hypo")) {
+  # for (sc in sel_collections) {
+    tmp <- subset(all_results_final_combined_filtered, #p.adj < 0.05 & 
+#                     (min_pos_rank < 10 | min_neg_rank < 10) &
+                     comp_direction == comp_dir & 
+                     comp_ID %in% sel_comparisons & 
+                     # collection_ID == sc & 
+                    untreated )
+    if(nrow(tmp) < 1) next
+
+    tmp[ ,sig_cnt:=.N, by="label"]
+    # Show only entries significant in at least two comparisons
+    tmp <- subset(tmp, sig_cnt >= 2)
+    
+    tmp[, median_logOR:=median(logOddsRatio), by="label"]
+    #tmp[, median_logOR_this_study:=median(logOddsRatio, na.rm=T), by="label"]
+    
+    #tmp2 <- tmp[study_type=="This study" & p.adj < 0.05]
+    tmp2 <- tmp[p.adj < 0.05]
+    tmp2[, median_logOR_esgi:=median(logOddsRatio), by="label"]
+    labels_ordered <- tmp2[order(tmp2$median_logOR_esgi, decreasing = T), ]$label |> unique()
+    
+    tmp <- subset(tmp, label %in% labels_ordered)
+    
+    tmp$label <- factor(tmp$label, levels=labels_ordered)
+    
+    tmp$significant = ifelse(tmp$p.adj < 0.05, "FDR<5%","n.s.")
+    
+    p <- ggplot(tmp, aes(x=label, y = logOddsRatio)) + 
+      geom_point(aes(col=significant, shape=target_group_type), size = 2) + 
+#      stat_summary(size=0.5) + 
+      theme_bw() +
+      theme(axis.text.x=element_text(angle=45, hjust=1),
+            plot.margin=unit(c(.2,.2,.2,2), 'cm'), 
+            strip.text.y = element_text(size=6)) + 
+      geom_hline(yintercept=0, col="red") + 
+      scale_color_manual(values=c("FDR<5%"="red3","n.s."="gray70")) +
+      facet_grid(study_type2 ~ collection_ID_2, scales = "free_x", space = "free_x") + 
+      ggtitle(paste0("Enrichment in ", comp_dir,"methylated CpGs")) + 
+      labs(x="",y="Enrichment Log Odds Ratio") + 
+      guides(col = guide_legend(title = "Significance"),
+             shape = guide_legend(title="Cell type")) +
+      scale_shape_manual(values=1:20)
+    
+    print(p)
+    
+    pdf(file.path(result_folder, paste0("LOLA_Enrichment_in_", comp_dir,"methylated_CpGs.pdf")), width=12, height = 4.5)
+    print(p)
+    dev.off()
+    
+    
+  # }
+}
+```
