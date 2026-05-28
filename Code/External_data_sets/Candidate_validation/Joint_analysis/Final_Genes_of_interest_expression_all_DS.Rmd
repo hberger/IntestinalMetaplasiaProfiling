@@ -82,6 +82,7 @@ HOXB7
 
 sel_genes = c("CDX2","HNF4A","HNF4G","SOX2","ISX", "REG4","AQP8","CLCA4","CA1","HOXA13","APOA1","APOA4","HOXC11","ALDOB","DEFA5","DEFA6", "REG1A","OLFM4","MUC5AC","MUC6","LYZ","LIPF", "TFF1","TFF2","TFF3","VIL1","GKN1","PGC", "MUC2", "SPINK4", "ALPI", "TREH", "ANPEP", "SI","AXIN2", "TBX3", "MEIS1","MEIS2","SIM2", "FOSL1","JUN","FOS","DKK1")
 #sel_genes = c("CDX2","REG4","ISG15","IFI27","AQP8","CLCA4","CA1","HOXA13","APOA1","APOA4","HOXC11","ALDOB","DEFA5","DEFA6", "KRT7","HES1", "REG1A","OLFM4","MUC12","MUC5B", "MUC6","LYZ","LIPF","MUC5AC", "TFF1","TFF2","TFF3","VIL1","GKN1","PGC", "MUC2", "SPINK4","EZR", "ALPI", "TREH", "ANPEP", "SI","AXIN2", "TBX3","HOXB7")
+# sel_genes <- c("NRG1","CXCL10","CLEC3B","CXCL2","CXCL8","HGF","WNT5B","IL7","THBS1")
 ```
 
 
@@ -167,6 +168,7 @@ all_plots = list()
 
 for (gg in sel_genes) {
   emat_ts = subset(combined_tabs, SYMBOL==gg & Condition %in% c("Healthy stomach","Intestinal/-like"))
+  if(nrow(emat_ts) < 1) {warning(paste0("Gene ", gg, "not found. Skipping. ")); next}
   emat_ts$Cohort2 <- gsub(",[ ]*", "\n", as.character(emat_ts$Cohort)) |> factor(levels=gsub(",[ ]*", "\n", levels(emat_ts$Cohort)))
 
   emat_ts_avg <- emat_ts[, .(Expression_antrum_centered=mean(Expression_antrum_centered)), by=c("Condition","Cohort2","SampleID")]

@@ -298,7 +298,7 @@ for(comp_dir in c("Hyper","Hypo")) {
     
     print(p)
     
-    pdf(file.path(result_folder, paste0("LOLA_Enrichment_in_", comp_dir,"methylated_CpGs.pdf")), width=12, height = 4.5)
+    pdf(file.path(result_folder, paste0("LOLA_Enrichment_in_", comp_dir,"methylated_CpGs.pdf")), width=12, height = 6)
     print(p)
     dev.off()
     
